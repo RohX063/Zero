@@ -334,6 +334,16 @@ bool Board::makeMove(Move mv, UndoInfo &undo) {
         if(pt != PAWN || to != enPassant || capSq < 0 || capSq > 63) return false;
         if(pieceOn[capSq] != PAWN || colorOn[capSq] != opp) return false;
     }
+    if(moveCastle(mv)) {
+        if(pt != KING) return false;
+        int rookFrom = -1;
+        if(to==G1) rookFrom=H1;
+        else if(to==C1) rookFrom=A1;
+        else if(to==G8) rookFrom=H8;
+        else if(to==C8) rookFrom=A8;
+        else return false;
+        if(pieceOn[rookFrom] != ROOK || colorOn[rookFrom] != col) return false;
+    }
 
     // Capture
     if(moveCapture(mv) && !moveEP(mv)) {
@@ -376,13 +386,11 @@ bool Board::makeMove(Move mv, UndoInfo &undo) {
 
     // Castling
     if(moveCastle(mv)) {
-        if(pt != KING) return false;
         int rookFrom, rookTo;
         if(to==G1){rookFrom=H1;rookTo=F1;}
         else if(to==C1){rookFrom=A1;rookTo=D1;}
         else if(to==G8){rookFrom=H8;rookTo=F8;}
         else {rookFrom=A8;rookTo=D8;}
-        if(pieceOn[rookFrom] != ROOK || colorOn[rookFrom] != col) return false;
         clearBit(pieces[col][ROOK],rookFrom);
         setBit(pieces[col][ROOK],rookTo);
         pieceOn[rookTo]=ROOK; colorOn[rookTo]=col;
@@ -535,9 +543,8 @@ void generateMoves(const Board &b, MoveList &ml) {
         
         // 4. EN PASSANT
         if(b.enPassant != NO_SQ) {
-            int epRank = b.enPassant / 8;
             int epFile = b.enPassant % 8;
-            int expectedRank = (col == WHITE) ? 5 : 2;
+            int expectedRank = (col == WHITE) ? 4 : 3;
             
             if(rank == expectedRank && abs(epFile - file) == 1) {
                 ml.add(encodeMove(sq, b.enPassant, 0, 1, 0, 1, 0));
