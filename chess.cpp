@@ -320,10 +320,19 @@ bool Board::makeMove(Move mv, UndoInfo &undo) {
     if(pt == NO_PIECE || from < 0 || from > 63 || to < 0 || to > 63) {
         return false;
     }
+    if(colorOn[from] != col) return false;
 
-    // SAFETY: Destination occupied by our piece? (non-capture)
-    if(!moveCapture(mv) && !moveEP(mv) && pieceOn[to] != NO_PIECE && colorOn[to] == col) {
+    // SAFETY: Capture flags must match board reality
+    if(!moveEP(mv) && moveCapture(mv)) {
+        if(pieceOn[to] == NO_PIECE || colorOn[to] != opp) return false;
+    }
+    if(!moveCapture(mv) && !moveEP(mv) && pieceOn[to] != NO_PIECE) {
         return false;
+    }
+    if(moveEP(mv)) {
+        int capSq = to + (col==WHITE ? -8 : 8);
+        if(pt != PAWN || to != enPassant || capSq < 0 || capSq > 63) return false;
+        if(pieceOn[capSq] != PAWN || colorOn[capSq] != opp) return false;
     }
 
     // Capture
@@ -367,11 +376,13 @@ bool Board::makeMove(Move mv, UndoInfo &undo) {
 
     // Castling
     if(moveCastle(mv)) {
+        if(pt != KING) return false;
         int rookFrom, rookTo;
         if(to==G1){rookFrom=H1;rookTo=F1;}
         else if(to==C1){rookFrom=A1;rookTo=D1;}
         else if(to==G8){rookFrom=H8;rookTo=F8;}
         else {rookFrom=A8;rookTo=D8;}
+        if(pieceOn[rookFrom] != ROOK || colorOn[rookFrom] != col) return false;
         clearBit(pieces[col][ROOK],rookFrom);
         setBit(pieces[col][ROOK],rookTo);
         pieceOn[rookTo]=ROOK; colorOn[rookTo]=col;
@@ -943,10 +954,13 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
 
     Move best = legal.moves[0];
     int bestScore = -INF;
+    bool openingPhase = popcount(b.occupancy[BOTH]) > 26;
 
     for(int d = 1; d <= depth && !info.stop; d++) {
         int currentBest = -INF;
         Move iterBest = legal.moves[0];
+        int iterScores[256];
+        for(int i = 0; i < legal.count; i++) iterScores[i] = -INF;
         int alpha = -INF, beta = INF;
 
         for(int i = 0; i < legal.count && !info.stop; i++) {
@@ -967,6 +981,7 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
             b.unmakeMove(legal.moves[i], undo);
 
             if(info.stop) break;
+            iterScores[i] = score;
 
             if(score > currentBest) {
                 currentBest = score;
@@ -977,6 +992,22 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
         }
 
         if(!info.stop) {
+            // In the opening, add controlled variety among near-equal moves.
+            if(openingPhase) {
+                int candidates[256];
+                int candidateCount = 0;
+                const int blendWindow = 20; // centipawns
+                for(int i = 0; i < legal.count; i++) {
+                    if(iterScores[i] >= currentBest - blendWindow) {
+                        candidates[candidateCount++] = i;
+                    }
+                }
+                if(candidateCount > 0) {
+                    int pick = candidates[rand() % candidateCount];
+                    iterBest = legal.moves[pick];
+                }
+            }
+
             best = iterBest;
             bestScore = currentBest;
             
@@ -1117,7 +1148,7 @@ void uciLoop() {
             }
         }
         else if(token == "go") {
-            int depth = 4;
+            int depth = 6;
             int movetime = -1;
             int wtime = -1, btime = -1;
             int winc = 0, binc = 0;
@@ -1137,22 +1168,23 @@ void uciLoop() {
                 int myTime = (b.side == WHITE) ? wtime : btime;
                 int myInc = (b.side == WHITE) ? winc : binc;
                 
-                // Use 5% of remaining time + 80% of increment
-                movetime = (myTime / 20) + (myInc * 8 / 10);
+                // Use ~8% of remaining time + full increment for stronger play.
+                movetime = (myTime / 12) + myInc;
                 
-                // Minimum 200ms, maximum 5 seconds
-                movetime = std::max(200, std::min(movetime, 5000));
+                // Minimum 1.5s, maximum 12s to avoid insta-moves.
+                movetime = std::max(1500, std::min(movetime, 12000));
             }
             
             // 🔴 DEPTH BASED ON TIME
-            if(movetime > 5000) depth = 7;
-            else if(movetime > 3000) depth = 6;
-            else if(movetime > 1000) depth = 5;
-            else depth = 4;
+            if(movetime > 10000) depth = 9;
+            else if(movetime > 7000) depth = 8;
+            else if(movetime > 4000) depth = 7;
+            else if(movetime > 2000) depth = 6;
+            else depth = 5;
             
             if(movetime < 0) {
-                movetime = 3000;
-                depth = 5;
+                movetime = 6000;
+                depth = 7;
             }
 
             Move m = bestMove(b, depth, movetime);
