@@ -124,6 +124,18 @@ static U64 setOccupancy(int idx, int bits, U64 mask) {
     return occ;
 }
 
+U64 getBishopAttacks(int sq, U64 occ) {
+    return bishopAttackOTF(sq, occ);
+}
+
+U64 getRookAttacks(int sq, U64 occ) {
+    return rookAttackOTF(sq, occ);
+}
+
+U64 getQueenAttacks(int sq, U64 occ) {
+    return bishopAttackOTF(sq, occ) | rookAttackOTF(sq, occ);
+}
+
 void initAttacks() {
     // Pawn attacks
     for(int sq = 0; sq < 64; sq++) {
@@ -373,35 +385,12 @@ void Board::recalcOccupancy() {
     occupancy[BOTH] = occupancy[WHITE] | occupancy[BLACK];
 }
 
-U64 getBishopAttacks(int sq, U64 occ) {
-    occ &= bishopMasks[sq];
-    occ *= bishopMagics[sq];
-    occ >>= (64 - bishopBits[sq]);
-    return bishopAttacks[sq][occ];
-}
-
-U64 getRookAttacks(int sq, U64 occ) {
-    occ &= rookMasks[sq];
-    occ *= rookMagics[sq];
-    occ >>= (64 - rookBits[sq]);
-    return rookAttacks[sq][occ];
-}
-
-U64 getQueenAttacks(int sq, U64 occ) {
-    return getBishopAttacks(sq, occ) | getRookAttacks(sq, occ);
-}
-
 bool Board::isSquareAttacked(int sq, int by) const {
-    if (pawnAttacks[by ^ 1][sq] & pieces[by][PAWN]) return true;
-    if (knightAttacks[sq] & pieces[by][KNIGHT]) return true;
-    if (kingAttacks[sq] & pieces[by][KING]) return true;
-
-    if (bishopAttackOTF(sq, occupancy[BOTH]) &
-        (pieces[by][BISHOP] | pieces[by][QUEEN])) return true;
-
-    if (rookAttackOTF(sq, occupancy[BOTH]) &
-        (pieces[by][ROOK] | pieces[by][QUEEN])) return true;
-
+    if(pawnAttacks[by ^ 1][sq] & pieces[by][PAWN]) return true;
+    if(knightAttacks[sq] & pieces[by][KNIGHT]) return true;
+    if(kingAttacks[sq] & pieces[by][KING]) return true;
+    if(getBishopAttacks(sq, occupancy[BOTH]) & (pieces[by][BISHOP] | pieces[by][QUEEN])) return true;
+    if(getRookAttacks(sq, occupancy[BOTH]) & (pieces[by][ROOK] | pieces[by][QUEEN])) return true;
     return false;
 }
 
@@ -595,43 +584,36 @@ void generateMoves(const Board &b, MoveList &ml) {
     
     // Bishops
     U64 bishops = b.pieces[col][BISHOP];
-while (bishops) {
-    int sq = popLSBIdx(bishops);
-    U64 atk = bishopAttackOTF(sq, b.occupancy[BOTH]) & ~b.occupancy[col];
-
-    while (atk) {
-        int to = popLSBIdx(atk);
-        ml.add(encodeMove(sq, to, 0, getBit(enemies, to) ? 1 : 0, 0, 0, 0));
+    while(bishops) {
+        int sq = popLSBIdx(bishops);
+        U64 atk = getBishopAttacks(sq, b.occupancy[BOTH]) & ~b.occupancy[col];
+        while(atk) {
+            int to = popLSBIdx(atk);
+            ml.add(encodeMove(sq, to, 0, getBit(enemies, to) ? 1 : 0, 0, 0, 0));
+        }
     }
-}
     
     // Rooks
     U64 rooks = b.pieces[col][ROOK];
-while (rooks) {
-    int sq = popLSBIdx(rooks);
-    U64 atk = rookAttackOTF(sq, b.occupancy[BOTH]) & ~b.occupancy[col];
-
-    while (atk) {
-        int to = popLSBIdx(atk);
-        ml.add(encodeMove(sq, to, 0, getBit(enemies, to) ? 1 : 0, 0, 0, 0));
+    while(rooks) {
+        int sq = popLSBIdx(rooks);
+        U64 atk = getRookAttacks(sq, b.occupancy[BOTH]) & ~b.occupancy[col];
+        while(atk) {
+            int to = popLSBIdx(atk);
+            ml.add(encodeMove(sq, to, 0, getBit(enemies, to) ? 1 : 0, 0, 0, 0));
+        }
     }
-}
     
     // Queens
     U64 queens = b.pieces[col][QUEEN];
-while (queens) {
-    int sq = popLSBIdx(queens);
-
-    U64 atk =
-        (bishopAttackOTF(sq, b.occupancy[BOTH]) |
-         rookAttackOTF(sq, b.occupancy[BOTH]))
-        & ~b.occupancy[col];
-
-    while (atk) {
-        int to = popLSBIdx(atk);
-        ml.add(encodeMove(sq, to, 0, getBit(enemies, to) ? 1 : 0, 0, 0, 0));
+    while(queens) {
+        int sq = popLSBIdx(queens);
+        U64 atk = getQueenAttacks(sq, b.occupancy[BOTH]) & ~b.occupancy[col];
+        while(atk) {
+            int to = popLSBIdx(atk);
+            ml.add(encodeMove(sq, to, 0, getBit(enemies, to) ? 1 : 0, 0, 0, 0));
+        }
     }
-}
     
     // King
     if(b.pieces[col][KING]) {
@@ -1482,162 +1464,44 @@ static void sortMoves(const Board &b, MoveList &ml, Move pvMove, int ply) {
         }
     }
 }
-// ═══════════════════════════════════════════════════════════
-//  TRANSPOSITION TABLE — Advanced Implementation
-//  Stockfish-style with aging, multi-bucket, better replacement
-// ═══════════════════════════════════════════════════════════
 
-// TT Entry flags
-enum TTFlag { TT_NONE = 0, TT_EXACT = 1, TT_ALPHA = 2, TT_BETA = 3 };
-
-// Advanced TT entry with aging
+// Transposition Table
+enum TTFlag { TT_EXACT = 0, TT_ALPHA = 1, TT_BETA = 2 };
 struct TTEntry {
-    uint32_t key32;      // Upper 32 bits of zobrist key
-    int16_t  score;      // Evaluation score
-    uint16_t move;       // Best move (compressed)
-    int8_t   depth;      // Search depth
-    uint8_t  genBound;   // Generation (6 bits) + Bound (2 bits)
-    
-    // Accessors
-    uint8_t generation() const { return genBound >> 2; }
-    uint8_t bound() const { return genBound & 3; }
-    
-    void save(uint32_t k, int16_t s, uint16_t m, int8_t d, uint8_t b, uint8_t g) {
-        key32 = k;
-        score = s;
-        move = m;
-        depth = d;
-        genBound = (g << 2) | b;
-    }
+    U64 key;
+    int score;
+    Move bestMove;
+    int16_t depth;
+    int8_t flag;
 };
 
-// TT Cluster (4 entries per bucket for better hit rate)
-static const int CLUSTER_SIZE = 4;
-struct TTCluster {
-    TTEntry entries[CLUSTER_SIZE];
-};
+static const int TT_SIZE = 1 << 22;
+static TTEntry TT[TT_SIZE];
+static bool ttInited = false;
 
-// TT Configuration
-static const int TT_SIZE_MB = 128;  // 128 MB default
-static const int TT_CLUSTERS = (TT_SIZE_MB * 1024 * 1024) / sizeof(TTCluster);
-
-static TTCluster* TT = nullptr;
-static uint8_t ttGeneration = 0;
-
-// Initialize TT
 static void initTT() {
-    if(!TT) {
-        TT = new TTCluster[TT_CLUSTERS];
-    }
-    memset(TT, 0, TT_CLUSTERS * sizeof(TTCluster));
-    ttGeneration = 0;
+    if(ttInited) return;
+    ttInited = true;
+    memset(TT, 0, sizeof(TT));
 }
 
-// Clear TT (called between games)
-static void clearTT() {
-    if(TT) {
-        memset(TT, 0, TT_CLUSTERS * sizeof(TTCluster));
-    }
-    ttGeneration = 0;
-}
-
-// Age TT (called at start of new search)
-static void ageTT() {
-    ttGeneration = (ttGeneration + 1) & 63;  // 6-bit wrap
-}
-
-// Store position in TT
 static void ttStore(U64 key, int score, Move m, int depth, int flag) {
-    if(!TT) return;
-    
-    uint32_t key32 = (uint32_t)(key >> 32);
-    int idx = (int)(key % TT_CLUSTERS);
-    TTCluster& cluster = TT[idx];
-    
-    // Find best slot to replace
-    TTEntry* replace = &cluster.entries[0];
-    
-    for(int i = 0; i < CLUSTER_SIZE; i++) {
-        TTEntry* e = &cluster.entries[i];
-        
-        // Empty slot or exact match
-        if(e->key32 == 0 || e->key32 == key32) {
-            replace = e;
-            break;
-        }
-        
-        // Replacement heuristic (Stockfish-style)
-        int replaceValue = (replace->generation() == ttGeneration ? 2 : 0) 
-                         + (replace->depth >= depth ? 1 : 0);
-        int currentValue = (e->generation() == ttGeneration ? 2 : 0)
-                         + (e->depth >= depth ? 1 : 0);
-        
-        if(currentValue < replaceValue) {
-            replace = e;
-        }
-    }
-    
-    // Save entry
-    replace->save(key32, (int16_t)score, (uint16_t)m, (int8_t)depth, 
-                  (uint8_t)flag, ttGeneration);
+    int i = (int)(key & (TT_SIZE - 1));
+    if(TT[i].key == 0 || depth >= TT[i].depth)
+        TT[i] = {key, score, m, (int16_t)depth, (int8_t)flag};
 }
 
-// Probe TT
 static bool ttProbe(U64 key, int depth, int alpha, int beta, int &score, Move &bm) {
-    if(!TT) return false;
-    
-    uint32_t key32 = (uint32_t)(key >> 32);
-    int idx = (int)(key % TT_CLUSTERS);
-    TTCluster& cluster = TT[idx];
-    
+    int i = (int)(key & (TT_SIZE - 1));
     bm = 0;
-    
-    // Search all entries in cluster
-    for(int i = 0; i < CLUSTER_SIZE; i++) {
-        TTEntry* e = &cluster.entries[i];
-        
-        if(e->key32 == key32) {
-            bm = e->move;
-            
-            // Depth check
-            if(e->depth < depth) return false;
-            
-            score = e->score;
-            int bound = e->bound();
-            
-            // Bound check
-            if(bound == TT_EXACT) return true;
-            if(bound == TT_ALPHA && score <= alpha) {
-                score = alpha;
-                return true;
-            }
-            if(bound == TT_BETA && score >= beta) {
-                score = beta;
-                return true;
-            }
-            
-            return false;  // Found but can't use
-        }
-    }
-    
-    return false;  // Not found
-}
-
-// Get TT move without score (for move ordering)
-static Move ttGetMove(U64 key) {
-    if(!TT) return 0;
-    
-    uint32_t key32 = (uint32_t)(key >> 32);
-    int idx = (int)(key % TT_CLUSTERS);
-    TTCluster& cluster = TT[idx];
-    
-    for(int i = 0; i < CLUSTER_SIZE; i++) {
-        if(cluster.entries[i].key32 == key32) {
-            return cluster.entries[i].move;
-        }
-    }
-    
-    return 0;
+    if(TT[i].key != key) return false;
+    bm = TT[i].bestMove;
+    if(TT[i].depth < depth) return false;
+    score = TT[i].score;
+    if(TT[i].flag == TT_EXACT) return true;
+    if(TT[i].flag == TT_ALPHA && score <= alpha) { score = alpha; return true; }
+    if(TT[i].flag == TT_BETA && score >= beta) { score = beta; return true; }
+    return false;
 }
 
 // Eval cache
@@ -1950,9 +1814,6 @@ static Move getBookMove(const Board &b) {
 // ============================================================
 
 Move bestMove(Board &b, int depth, int timeLimitMs) {
-    // Age TT for new search (prevents stale entries)
-    ageTT();
-    
     // initZobrist();
     // initTT();
     // initLMR();
@@ -2169,6 +2030,33 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
 }
 
 // ============================================================
+// moveTostr
+// ============================================================
+
+std::string moveToStr(Move m) {
+    std::string s = "";
+
+    int from = moveFrom(m);
+    int to   = moveTo(m);
+
+    s += char('a' + (from % 8));
+    s += char('1' + (from / 8));
+    s += char('a' + (to % 8));
+    s += char('1' + (to / 8));
+
+    int promo = movePromo(m);
+    if (promo) {
+        char p = 'q';
+        if (promo == KNIGHT) p = 'n';
+        else if (promo == ROOK) p = 'r';
+        else if (promo == BISHOP) p = 'b';
+        s += p;
+    }
+
+    return s;
+}
+
+// ============================================================
 //  PERFT
 // ============================================================
 
@@ -2211,33 +2099,6 @@ void divide(Board &b, int depth) {
         total += n;
     }
     std::cout << "Legal moves: " << legal << "\nTotal: " << total << "\n";
-}
-
-std::string squareName(int sq) {
-    std::string files = "abcdefgh";
-    std::string ranks = "12345678";
-
-    if (sq < 0 || sq > 63) return "??";
-
-    std::string s;
-    s += files[sq % 8];
-    s += ranks[sq / 8];
-    return s;
-}
-
-std::string moveToStr(Move m) {
-    std::string s = squareName(moveFrom(m)) + squareName(moveTo(m));
-
-    int promo = movePromo(m);
-    if (promo) {
-        char pc = 'q';
-        if (promo == KNIGHT) pc = 'n';
-        else if (promo == BISHOP) pc = 'b';
-        else if (promo == ROOK) pc = 'r';
-        s += pc;
-    }
-
-    return s;
 }
 
 // ============================================================
