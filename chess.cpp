@@ -406,21 +406,25 @@ bool Board::makeMove(Move mv, UndoInfo &undo) {
     // Remove from source
     zobristHash ^= ZP[col][pt][from];
     
-    if(moveCapture(mv) && !moveEP(mv)) {
-        undo.capturedPiece = pieceOn[to];
-        int capturedPt = pieceOn[to];
-        if(capturedPt != NO_PIECE) {
-            zobristHash ^= ZP[opp][capturedPt][to];
-            clearBit(pieces[opp][capturedPt], to);
-        }
-        pieceOn[to] = NO_PIECE;
-        colorOn[to] = BOTH;
-        halfMove = 0;
-    } else if(pt == PAWN) {
-        halfMove = 0;
-    } else {
-        halfMove++;
+    if(moveCapture(mv) && !moveEP(mv))
+{
+    int capturedPt = pieceOn[to];
+
+    if(capturedPt == NO_PIECE || colorOn[to] != opp)
+    {
+        undo.restore(*this);
+        return false;
     }
+
+    undo.capturedPiece = capturedPt;
+
+    zobristHash ^= ZP[opp][capturedPt][to];
+    clearBit(pieces[opp][capturedPt], to);
+
+    pieceOn[to] = NO_PIECE;
+    colorOn[to] = BOTH;
+    halfMove = 0;
+}
     
     clearBit(pieces[col][pt], from);
     setBit(pieces[col][pt], to);
@@ -1296,7 +1300,8 @@ int evaluate(const Board &b) {
             }
         }
         if(attackers >= 2) {
-            int danger = attackScore * attackers / 4;
+            int danger = attackScore * attackers / 8;
+            danger = std::min(danger, 80);
             score += sign * danger;
         }
     }
@@ -1330,7 +1335,7 @@ int evaluate(const Board &b) {
     
     // 🔥 TACTICAL EVALUATION (THE MAIN UPGRADE)
     if(!isEndgame) {
-        score += evalTactical(b);
+        score += evalTactical(b) /4;
     }
     
     return (b.side == WHITE) ? score : -score;
@@ -1427,41 +1432,81 @@ static bool seeGe(const Board &b, Move m, int threshold) {
     return b.side != side;
 }
 
-static int scoreMove(const Board &b, Move m, int ply) {
+static int scoreMove(const Board &b, Move m, int ply)
+{
     int s = 0;
-    if(moveCapture(m)) {
+
+    // PV / tactical captures first
+    if (moveCapture(m))
+    {
         int att = b.pieceOn[moveFrom(m)];
         int vic = moveEP(m) ? PAWN : b.pieceOn[moveTo(m)];
-        if(att != NO_PIECE && vic != NO_PIECE) {
-            if(seeGe(b, m, 1)) s = 10000 + MATERIAL[vic] - MATERIAL[att];
-            else if(seeGe(b, m, 0)) s = 9000 + MATERIAL[vic] - MATERIAL[att];
-            else s = 2000 + MATERIAL[vic] - MATERIAL[att];
+
+        if (att != NO_PIECE && vic != NO_PIECE)
+        {
+            // Strong MVV-LVA base
+            s = 12000 + MATERIAL[vic] * 10 - MATERIAL[att];
+
+            // SEE bonus/penalty only adjust, not dominate
+            if (seeGe(b, m, 1)) s += 800;
+            else if (!seeGe(b, m, 0)) s -= 2500;
+        }
+        else
+        {
+            s = 10000;
         }
     }
-    if(movePromo(m)) s += 9500 + (movePromo(m) == QUEEN ? 900 : 300);
-    if(!moveCapture(m) && !movePromo(m)) {
-        if(ply >= 0 && ply < MAX_PLY) {
-            if(m == killers[ply][0]) s += 8500;
-            else if(m == killers[ply][1]) s += 7500;
+
+    // Promotions
+    if (movePromo(m))
+    {
+        s += 11000;
+        if (movePromo(m) == QUEEN) s += 1000;
+        else s += 300;
+    }
+
+    // Quiet moves
+    if (!moveCapture(m) && !movePromo(m))
+    {
+        if (ply >= 0 && ply < MAX_PLY)
+        {
+            if (m == killers[ply][0]) s += 9000;
+            else if (m == killers[ply][1]) s += 8000;
         }
+
         s += history[b.side][moveFrom(m)][moveTo(m)];
     }
+
     return s;
 }
 
-static void sortMoves(const Board &b, MoveList &ml, Move pvMove, int ply) {
+static void sortMoves(const Board &b, MoveList &ml, Move pvMove, int ply)
+{
     int scores[256];
-    for(int i = 0; i < ml.count; i++)
-        scores[i] = (ml.moves[i] == pvMove) ? (INF + 2) : scoreMove(b, ml.moves[i], ply);
-    
-    for(int i = 0; i < ml.count - 1; i++) {
-        int best = i;
-        for(int j = i + 1; j < ml.count; j++)
-            if(scores[j] > scores[best]) best = j;
-        if(best != i) {
-            std::swap(scores[i], scores[best]);
-            std::swap(ml.moves[i], ml.moves[best]);
+
+    for (int i = 0; i < ml.count; i++)
+    {
+        scores[i] = (ml.moves[i] == pvMove)
+            ? (INF + 2)
+            : scoreMove(b, ml.moves[i], ply);
+    }
+
+    // Insertion sort (great for small lists)
+    for (int i = 1; i < ml.count; i++)
+    {
+        Move keyMove = ml.moves[i];
+        int keyScore = scores[i];
+        int j = i - 1;
+
+        while (j >= 0 && scores[j] < keyScore)
+        {
+            ml.moves[j + 1] = ml.moves[j];
+            scores[j + 1] = scores[j];
+            j--;
         }
+
+        ml.moves[j + 1] = keyMove;
+        scores[j + 1] = keyScore;
     }
 }
 
@@ -1534,12 +1579,38 @@ int quiescence(Board &b, int alpha, int beta, int ply, SearchInfo &info) {
     
     // Filter moves
     int scores[256], cnt = 0;
-    for(int i = 0; i < ml.count; i++) {
-        if(inChk || moveCapture(ml.moves[i])) {
-            scores[cnt] = scoreMove(b, ml.moves[i], ply);
-            ml.moves[cnt++] = ml.moves[i];
+
+for (int i = 0; i < ml.count; i++)
+{
+    Move m = ml.moves[i];
+
+    bool keep = false;
+
+    if (inChk)
+        keep = true;                 // all evasions
+    else if (moveCapture(m))
+        keep = true;                 // captures
+    else
+    {
+        // test quiet checks
+        UndoInfo u;
+        if (b.makeMove(m, u))
+        {
+            if (b.inCheck())        // opponent now in check
+                keep = true;
+
+            b.unmakeMove(m, u);
         }
     }
+
+    if (keep)
+    {
+        scores[cnt] = scoreMove(b, m, ply);
+        ml.moves[cnt++] = m;
+    }
+}
+
+ml.count = cnt;
     ml.count = cnt;
     
     // Sort
@@ -1633,7 +1704,7 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
     }
     
     // IIR
-    if(depth >= 4 && ttMv == 0) depth--;
+   // if(depth >= 4 && ttMv == 0) depth--;
     
     MoveList ml;
     generateMoves(b, ml);
@@ -1663,14 +1734,14 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
                     b.unmakeMove(m, u);
                     continue;
                 }
-            } else if(!isCap && !isPro && !givesCheck) {
+            } else if(!isCap && !isPro && !givesCheck && !b.inCheck() ) {
                 int lmrDepth = std::max(0, depth - 1 - (mc > 6 ? 2 : mc > 3 ? 1 : 0));
                 if(rawEval + 60 + 120 * lmrDepth <= alpha && lmrDepth < 7) {
                     b.unmakeMove(m, u);
                     continue;
                 }
-                int maxMoves = 3 + depth * depth / (improving ? 1 : 2);
-                if(mc > maxMoves && depth <= 6) {
+                int maxMoves = 6 + depth * depth;
+                if(mc > maxMoves && depth <= 4) {
                     b.unmakeMove(m, u);
                     continue;
                 }
@@ -1687,7 +1758,7 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
             score = -alphaBeta(b, -beta, -alpha, newDepth, ply + 1, info, true);
         } else if(doLMR) {
             int R = lmrTable[std::min(63, std::max(0, newDepth))][std::min(63, std::max(0, mc))];
-            if(!improving) R++;
+            if(!improving && newDepth >= 4) R++;
             
             int reducedDepth = std::max(1, newDepth - R);
             score = -alphaBeta(b, -alpha - 1, -alpha, reducedDepth, ply + 1, info, true);
@@ -1934,6 +2005,22 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
                 }
 
                 b.unmakeMove(legal.moves[i], u);
+
+                if(d == 1) {
+    std::string mv;
+    mv += char('a' + moveFrom(legal.moves[i]) % 8);
+    mv += char('1' + moveFrom(legal.moves[i]) / 8);
+    mv += char('a' + moveTo(legal.moves[i]) % 8);
+    mv += char('1' + moveTo(legal.moves[i]) / 8);
+
+    if(movePromo(legal.moves[i])) {
+        const char pr[] = {'?', 'n', 'b', 'r', 'q'};
+        mv += pr[movePromo(legal.moves[i])];
+    }
+
+    std::cout << "ROOTMOVE " << mv
+              << " score " << score << "\n";
+}
 
                 if(info.stop)
                     break;
