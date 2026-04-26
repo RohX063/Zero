@@ -406,25 +406,21 @@ bool Board::makeMove(Move mv, UndoInfo &undo) {
     // Remove from source
     zobristHash ^= ZP[col][pt][from];
     
-    if(moveCapture(mv) && !moveEP(mv))
-{
-    int capturedPt = pieceOn[to];
-
-    if(capturedPt == NO_PIECE || colorOn[to] != opp)
-    {
-        undo.restore(*this);
-        return false;
+    if(moveCapture(mv) && !moveEP(mv)) {
+        undo.capturedPiece = pieceOn[to];
+        int capturedPt = pieceOn[to];
+        if(capturedPt != NO_PIECE) {
+            zobristHash ^= ZP[opp][capturedPt][to];
+            clearBit(pieces[opp][capturedPt], to);
+        }
+        pieceOn[to] = NO_PIECE;
+        colorOn[to] = BOTH;
+        halfMove = 0;
+    } else if(pt == PAWN) {
+        halfMove = 0;
+    } else {
+        halfMove++;
     }
-
-    undo.capturedPiece = capturedPt;
-
-    zobristHash ^= ZP[opp][capturedPt][to];
-    clearBit(pieces[opp][capturedPt], to);
-
-    pieceOn[to] = NO_PIECE;
-    colorOn[to] = BOTH;
-    halfMove = 0;
-}
     
     clearBit(pieces[col][pt], from);
     setBit(pieces[col][pt], to);
@@ -1300,8 +1296,7 @@ int evaluate(const Board &b) {
             }
         }
         if(attackers >= 2) {
-            int danger = attackScore * attackers / 8;
-            danger = std::min(danger, 80);
+            int danger = attackScore * attackers / 4;
             score += sign * danger;
         }
     }
@@ -1335,7 +1330,7 @@ int evaluate(const Board &b) {
     
     // 🔥 TACTICAL EVALUATION (THE MAIN UPGRADE)
     if(!isEndgame) {
-        score += evalTactical(b) /4;
+        score += evalTactical(b);
     }
     
     return (b.side == WHITE) ? score : -score;
@@ -1372,12 +1367,17 @@ static void clearTables() {
 }
 
 static inline void checkTime(SearchInfo &info) {
-    if(info.timeLimit > 0 && (info.nodes & 2047) == 0) {
+    if(info.timeLimit <= 0) return;
+
+    if((info.nodes & 155) == 0) {
         auto e = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - info.startTime).count();
-        if(e >= info.timeLimit) info.stop = true;
+
+            if(e >= info.timeLimit)
+            info.stop = true;
     }
-}
+
+    }
 
 // SEE - Simplified but correct
 static bool seeGe(const Board &b, Move m, int threshold) {
@@ -1432,81 +1432,41 @@ static bool seeGe(const Board &b, Move m, int threshold) {
     return b.side != side;
 }
 
-static int scoreMove(const Board &b, Move m, int ply)
-{
+static int scoreMove(const Board &b, Move m, int ply) {
     int s = 0;
-
-    // PV / tactical captures first
-    if (moveCapture(m))
-    {
+    if(moveCapture(m)) {
         int att = b.pieceOn[moveFrom(m)];
         int vic = moveEP(m) ? PAWN : b.pieceOn[moveTo(m)];
-
-        if (att != NO_PIECE && vic != NO_PIECE)
-        {
-            // Strong MVV-LVA base
-            s = 12000 + MATERIAL[vic] * 10 - MATERIAL[att];
-
-            // SEE bonus/penalty only adjust, not dominate
-            if (seeGe(b, m, 1)) s += 800;
-            else if (!seeGe(b, m, 0)) s -= 2500;
-        }
-        else
-        {
-            s = 10000;
+        if(att != NO_PIECE && vic != NO_PIECE) {
+            if(seeGe(b, m, 1)) s = 10000 + MATERIAL[vic] - MATERIAL[att];
+            else if(seeGe(b, m, 0)) s = 9000 + MATERIAL[vic] - MATERIAL[att];
+            else s = 2000 + MATERIAL[vic] - MATERIAL[att];
         }
     }
-
-    // Promotions
-    if (movePromo(m))
-    {
-        s += 11000;
-        if (movePromo(m) == QUEEN) s += 1000;
-        else s += 300;
-    }
-
-    // Quiet moves
-    if (!moveCapture(m) && !movePromo(m))
-    {
-        if (ply >= 0 && ply < MAX_PLY)
-        {
-            if (m == killers[ply][0]) s += 9000;
-            else if (m == killers[ply][1]) s += 8000;
+    if(movePromo(m)) s += 9500 + (movePromo(m) == QUEEN ? 900 : 300);
+    if(!moveCapture(m) && !movePromo(m)) {
+        if(ply >= 0 && ply < MAX_PLY) {
+            if(m == killers[ply][0]) s += 8500;
+            else if(m == killers[ply][1]) s += 7500;
         }
-
         s += history[b.side][moveFrom(m)][moveTo(m)];
     }
-
     return s;
 }
 
-static void sortMoves(const Board &b, MoveList &ml, Move pvMove, int ply)
-{
+static void sortMoves(const Board &b, MoveList &ml, Move pvMove, int ply) {
     int scores[256];
-
-    for (int i = 0; i < ml.count; i++)
-    {
-        scores[i] = (ml.moves[i] == pvMove)
-            ? (INF + 2)
-            : scoreMove(b, ml.moves[i], ply);
-    }
-
-    // Insertion sort (great for small lists)
-    for (int i = 1; i < ml.count; i++)
-    {
-        Move keyMove = ml.moves[i];
-        int keyScore = scores[i];
-        int j = i - 1;
-
-        while (j >= 0 && scores[j] < keyScore)
-        {
-            ml.moves[j + 1] = ml.moves[j];
-            scores[j + 1] = scores[j];
-            j--;
+    for(int i = 0; i < ml.count; i++)
+        scores[i] = (ml.moves[i] == pvMove) ? (INF + 2) : scoreMove(b, ml.moves[i], ply);
+    
+    for(int i = 0; i < ml.count - 1; i++) {
+        int best = i;
+        for(int j = i + 1; j < ml.count; j++)
+            if(scores[j] > scores[best]) best = j;
+        if(best != i) {
+            std::swap(scores[i], scores[best]);
+            std::swap(ml.moves[i], ml.moves[best]);
         }
-
-        ml.moves[j + 1] = keyMove;
-        scores[j + 1] = keyScore;
     }
 }
 
@@ -1579,38 +1539,12 @@ int quiescence(Board &b, int alpha, int beta, int ply, SearchInfo &info) {
     
     // Filter moves
     int scores[256], cnt = 0;
-
-for (int i = 0; i < ml.count; i++)
-{
-    Move m = ml.moves[i];
-
-    bool keep = false;
-
-    if (inChk)
-        keep = true;                 // all evasions
-    else if (moveCapture(m))
-        keep = true;                 // captures
-    else
-    {
-        // test quiet checks
-        UndoInfo u;
-        if (b.makeMove(m, u))
-        {
-            if (b.inCheck())        // opponent now in check
-                keep = true;
-
-            b.unmakeMove(m, u);
+    for(int i = 0; i < ml.count; i++) {
+        if(inChk || moveCapture(ml.moves[i])) {
+            scores[cnt] = scoreMove(b, ml.moves[i], ply);
+            ml.moves[cnt++] = ml.moves[i];
         }
     }
-
-    if (keep)
-    {
-        scores[cnt] = scoreMove(b, m, ply);
-        ml.moves[cnt++] = m;
-    }
-}
-
-ml.count = cnt;
     ml.count = cnt;
     
     // Sort
@@ -1704,7 +1638,7 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
     }
     
     // IIR
-   // if(depth >= 4 && ttMv == 0) depth--;
+    if(depth >= 4 && ttMv == 0) depth--;
     
     MoveList ml;
     generateMoves(b, ml);
@@ -1734,14 +1668,14 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
                     b.unmakeMove(m, u);
                     continue;
                 }
-            } else if(!isCap && !isPro && !givesCheck && !b.inCheck() ) {
+            } else if(!isCap && !isPro && !givesCheck) {
                 int lmrDepth = std::max(0, depth - 1 - (mc > 6 ? 2 : mc > 3 ? 1 : 0));
                 if(rawEval + 60 + 120 * lmrDepth <= alpha && lmrDepth < 7) {
                     b.unmakeMove(m, u);
                     continue;
                 }
-                int maxMoves = 6 + depth * depth;
-                if(mc > maxMoves && depth <= 4) {
+                int maxMoves = 3 + depth * depth / (improving ? 1 : 2);
+                if(mc > maxMoves && depth <= 6) {
                     b.unmakeMove(m, u);
                     continue;
                 }
@@ -1758,7 +1692,7 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
             score = -alphaBeta(b, -beta, -alpha, newDepth, ply + 1, info, true);
         } else if(doLMR) {
             int R = lmrTable[std::min(63, std::max(0, newDepth))][std::min(63, std::max(0, mc))];
-            if(!improving && newDepth >= 4) R++;
+            if(!improving) R++;
             
             int reducedDepth = std::max(1, newDepth - R);
             score = -alphaBeta(b, -alpha - 1, -alpha, reducedDepth, ply + 1, info, true);
@@ -1912,7 +1846,7 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
             bm += pr[movePromo(bookMv)];
         }
 
-        std::cout << "info depth 0 score cp 20 nodes 1 time 0 pv "
+       std::cout << "info depth 0 score cp 20 nodes 1 time 0 pv "
                   << bm << "\n";
         std::cout << "bestmove " << bm << "\n";
         return bookMv;
@@ -1941,8 +1875,9 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
 
     // ───────────────── ITERATIVE DEEPENING ─────────────────
     for(int d = 1; d <= depth && !info.stop; d++) {
+        sortMoves(b, legal, best, 0);
 
-        int asp = (d >= 8) ? 25 : (d >= 5 ? 40 : INF);
+        int asp = INF;
 
         int alpha = (asp == INF || bestScore <= -MATE/2)
                     ? -INF : bestScore - asp;
@@ -2005,22 +1940,6 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
                 }
 
                 b.unmakeMove(legal.moves[i], u);
-
-                if(d == 1) {
-    std::string mv;
-    mv += char('a' + moveFrom(legal.moves[i]) % 8);
-    mv += char('1' + moveFrom(legal.moves[i]) / 8);
-    mv += char('a' + moveTo(legal.moves[i]) % 8);
-    mv += char('1' + moveTo(legal.moves[i]) / 8);
-
-    if(movePromo(legal.moves[i])) {
-        const char pr[] = {'?', 'n', 'b', 'r', 'q'};
-        mv += pr[movePromo(legal.moves[i])];
-    }
-
-    std::cout << "ROOTMOVE " << mv
-              << " score " << score << "\n";
-}
 
                 if(info.stop)
                     break;
@@ -2092,8 +2011,9 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
 
             // soft stop
             if(timeLimitMs > 0 &&
+                depth >= 64 &&
                d >= 6 &&
-               elapsed >= timeLimitMs * 85 / 100)
+               elapsed >= timeLimitMs * 60 / 100)
             {
                 info.stop = true;
             }
@@ -2114,33 +2034,6 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
 
     std::cout << "bestmove " << bm << "\n";
     return best;
-}
-
-// ============================================================
-// moveTostr
-// ============================================================
-
-std::string moveToStr(Move m) {
-    std::string s = "";
-
-    int from = moveFrom(m);
-    int to   = moveTo(m);
-
-    s += char('a' + (from % 8));
-    s += char('1' + (from / 8));
-    s += char('a' + (to % 8));
-    s += char('1' + (to / 8));
-
-    int promo = movePromo(m);
-    if (promo) {
-        char p = 'q';
-        if (promo == KNIGHT) p = 'n';
-        else if (promo == ROOK) p = 'r';
-        else if (promo == BISHOP) p = 'b';
-        s += p;
-    }
-
-    return s;
 }
 
 // ============================================================
@@ -2186,6 +2079,28 @@ void divide(Board &b, int depth) {
         total += n;
     }
     std::cout << "Legal moves: " << legal << "\nTotal: " << total << "\n";
+}
+
+// ============================================================
+// moveToString
+// ============================================================
+std::string moveToStr(Move m) {
+    std::string s = "0000";
+    int from = moveFrom(m), to = moveTo(m);
+
+    s[0] = 'a' + (from % 8);
+    s[1] = '1' + (from / 8);
+    s[2] = 'a' + (to % 8);
+    s[3] = '1' + (to / 8);
+
+    if(movePromo(m)) {
+        char p='q';
+        if(movePromo(m)==ROOK) p='r';
+        else if(movePromo(m)==BISHOP) p='b';
+        else if(movePromo(m)==KNIGHT) p='n';
+        s += p;
+    }
+    return s;
 }
 
 // ============================================================
@@ -2269,12 +2184,17 @@ void uciLoop() {
             if(!ms && wtime > 0 && btime > 0) {
                 int myTime = (b.side == WHITE) ? wtime : btime;
                 int myInc = (b.side == WHITE) ? winc : binc;
+
                 int usable = std::max(0, myTime - 30);
                 movetime = usable / 15 + (myInc * 4) / 5;
                 movetime = std::max(120, std::min(movetime, usable / 2));
             }
+            // defaults
             if(!ds && !ms) depth = 64;
-            if(movetime < 0) movetime = 5000;
+
+            //KEY FIX
+            if(ds && !ms) movetime = 1000000000;
+            else if (movetime < 0) movetime = 50000;
             bestMove(b, depth, movetime);
         }
         else if(token == "d") {
@@ -2304,3 +2224,4 @@ void uciLoop() {
         }
     }
 }
+
