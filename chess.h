@@ -277,4 +277,4 @@ void divide(Board& b, int depth);
 std::string squareName(int sq);
 std::string moveToStr(Move m);
 Move strToMove(const Board& b, const std::string& str);
-void uciLoop();
+void uciLoop()
