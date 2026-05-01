@@ -739,369 +739,10 @@ static const int PASSED_BONUS_MG[8] = {0, 5, 10, 20, 35, 55, 80, 0};
 static const int PASSED_BONUS_EG[8] = {0, 10, 20, 35, 60, 95, 140, 0};
 
 // ============================================================
-//  TACTICAL EVALUATION — ELITE v14.0
+//  TACTICAL EVALUATION — DISABLED (returns 0 for now)
 // ============================================================
-
-// Helper: squares between two aligned squares
-static U64 betweenMask(int sq1, int sq2) {
-    int f1 = sq1 % 8, r1 = sq1 / 8;
-    int f2 = sq2 % 8, r2 = sq2 / 8;
-    U64 mask = 0;
-    
-    if(f1 == f2) {
-        int step = (r2 > r1) ? 1 : -1;
-        for(int r = r1 + step; r != r2; r += step)
-            setBit(mask, r * 8 + f1);
-    }
-    else if(r1 == r2) {
-        int step = (f2 > f1) ? 1 : -1;
-        for(int f = f1 + step; f != f2; f += step)
-            setBit(mask, r1 * 8 + f);
-    }
-    else if(abs(f2 - f1) == abs(r2 - r1)) {
-        int fStep = (f2 > f1) ? 1 : -1;
-        int rStep = (r2 > r1) ? 1 : -1;
-        int f = f1 + fStep, r = r1 + rStep;
-        while(f != f2) {
-            setBit(mask, r * 8 + f);
-            f += fStep; r += rStep;
-        }
-    }
-    return mask;
-}
-
-// All attackers on a square (both colors)
-static U64 allAttackers(const Board &b, int sq, U64 occ) {
-    return (pawnAttacks[WHITE][sq] & b.pieces[BLACK][PAWN]) |
-           (pawnAttacks[BLACK][sq] & b.pieces[WHITE][PAWN]) |
-           (knightAttacks[sq] & (b.pieces[WHITE][KNIGHT] | b.pieces[BLACK][KNIGHT])) |
-           (getBishopAttacks(sq, occ) & (b.pieces[WHITE][BISHOP] | b.pieces[BLACK][BISHOP] |
-                                         b.pieces[WHITE][QUEEN] | b.pieces[BLACK][QUEEN])) |
-           (getRookAttacks(sq, occ) & (b.pieces[WHITE][ROOK] | b.pieces[BLACK][ROOK] |
-                                       b.pieces[WHITE][QUEEN] | b.pieces[BLACK][QUEEN])) |
-           (kingAttacks[sq] & (b.pieces[WHITE][KING] | b.pieces[BLACK][KING]));
-}
-
-// 1. FORK DETECTION
-// Piece attacks 2+ non-pawn enemy pieces (or king + piece)
-static int evalForks(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        
-        // Knight forks
-        U64 knights = b.pieces[col][KNIGHT];
-        while(knights) {
-            int sq = popLSBIdx(knights);
-            U64 atk = knightAttacks[sq];
-            int targets = 0;
-            int targetValue = 0;
-            
-            for(int pt = ROOK; pt <= QUEEN; pt++) {
-                U64 hits = atk & b.pieces[opp][pt];
-                if(hits) {
-                    targets += popcount(hits);
-                    targetValue += MATERIAL[pt] * popcount(hits);
-                }
-            }
-            // King + piece fork
-            if(atk & b.pieces[opp][KING]) {
-                targets += 2;
-                targetValue += 400;
-            }
-            
-            if(targets >= 2) {
-                bool defended = b.isSquareAttacked(sq, opp);
-                int bonus = (targetValue - MATERIAL[KNIGHT]) / 3;
-                if(!defended) bonus = bonus * 3 / 2;
-                score += sign * std::min(bonus, 200);
-            }
-        }
-        
-        // Bishop/Queen diagonal forks
-        U64 bishops = b.pieces[col][BISHOP];
-        while(bishops) {
-            int sq = popLSBIdx(bishops);
-            U64 atk = getBishopAttacks(sq, b.occupancy[BOTH]);
-            int targets = 0;
-            for(int pt = ROOK; pt <= KING; pt++) {
-                if(atk & b.pieces[opp][pt]) targets++;
-            }
-            if(targets >= 2) score += sign * 60;
-        }
-    }
-    return score;
-}
-
-// 2. PIN & SKEWER DETECTION
-// Sliding piece attacks through enemy piece to king/queen/rook
-static int evalPins(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        int oppKing = b.pieces[opp][KING] ? lsb(b.pieces[opp][KING]) : -1;
-        if(oppKing < 0) continue;
-        
-        // Diagonal pins (Bishop/Queen)
-        U64 diagAttackers = b.pieces[col][BISHOP] | b.pieces[col][QUEEN];
-        while(diagAttackers) {
-            int sq = popLSBIdx(diagAttackers);
-            U64 ray = getBishopAttacks(sq, b.occupancy[BOTH]);
-            if(ray & (1ULL << oppKing)) {
-                U64 between = betweenMask(sq, oppKing) & b.occupancy[opp];
-                if(popcount(between) == 1) {
-                    int pinnedSq = lsb(between);
-                    int pinnedPt = b.pieceOn[pinnedSq];
-                    if(pinnedPt >= 0 && pinnedPt < 6) {
-                        // More valuable pinned piece = bigger bonus
-                        int bonus = MATERIAL[pinnedPt] / 4;
-                        // If pinned to queen, even bigger
-                        if(pinnedPt == QUEEN) bonus += 50;
-                        score += sign * bonus;
-                    }
-                }
-            }
-        }
-        
-        // Rank/file pins (Rook/Queen)
-        U64 lineAttackers = b.pieces[col][ROOK] | b.pieces[col][QUEEN];
-        while(lineAttackers) {
-            int sq = popLSBIdx(lineAttackers);
-            U64 ray = getRookAttacks(sq, b.occupancy[BOTH]);
-            if(ray & (1ULL << oppKing)) {
-                U64 between = betweenMask(sq, oppKing) & b.occupancy[opp];
-                if(popcount(between) == 1) {
-                    int pinnedSq = lsb(between);
-                    int pinnedPt = b.pieceOn[pinnedSq];
-                    if(pinnedPt >= 0 && pinnedPt < 6) {
-                        int bonus = MATERIAL[pinnedPt] / 3;
-                        if(pinnedPt == QUEEN) bonus += 75;
-                        score += sign * bonus;
-                    }
-                }
-            }
-        }
-    }
-    return score;
-}
-
-// 3. DISCOVERED ATTACK THREATS
-// Moving a piece reveals attack on enemy king/queen
-static int evalDiscovered(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        int oppKing = b.pieces[opp][KING] ? lsb(b.pieces[opp][KING]) : -1;
-        int oppQueen = b.pieces[opp][QUEEN] ? lsb(b.pieces[opp][QUEEN]) : -1;
-        
-        U64 sliders = b.pieces[col][BISHOP] | b.pieces[col][ROOK] | b.pieces[col][QUEEN];
-        
-        // For each of our non-slider pieces, check if moving it reveals attack
-        U64 blockers = b.occupancy[col] & ~(b.pieces[col][PAWN] | b.pieces[col][KING]);
-        
-        while(blockers) {
-            int sq = popLSBIdx(blockers);
-            int pt = b.pieceOn[sq];
-            if(pt == BISHOP || pt == ROOK || pt == QUEEN) continue;
-            
-            U64 occWithout = b.occupancy[BOTH] & ~(1ULL << sq);
-            
-            // Check all our sliders
-            U64 s = sliders;
-            while(s) {
-                int sliderSq = popLSBIdx(s);
-                int sliderPt = b.pieceOn[sliderSq];
-                
-                U64 oldAtk = (sliderPt == BISHOP || sliderPt == QUEEN) ? 
-                             getBishopAttacks(sliderSq, b.occupancy[BOTH]) :
-                             getRookAttacks(sliderSq, b.occupancy[BOTH]);
-                U64 newAtk = (sliderPt == BISHOP || sliderPt == QUEEN) ? 
-                             getBishopAttacks(sliderSq, occWithout) :
-                             getRookAttacks(sliderSq, occWithout);
-                
-                U64 revealed = newAtk & ~oldAtk;
-                
-                // Revealed attack on king = massive bonus
-                if(oppKing >= 0 && (revealed & (1ULL << oppKing))) {
-                    score += sign * 150;
-                }
-                // Revealed attack on queen
-                if(oppQueen >= 0 && (revealed & (1ULL << oppQueen))) {
-                    score += sign * 80;
-                }
-            }
-        }
-    }
-    return score;
-}
-
-// 4. HANGING PIECES (Undefended attacked pieces)
-static int evalHanging(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        
-        for(int pt = KNIGHT; pt <= QUEEN; pt++) {
-            U64 bb = b.pieces[col][pt];
-            while(bb) {
-                int sq = popLSBIdx(bb);
-                U64 atk = allAttackers(b, sq, b.occupancy[BOTH]);
-                U64 oppAtk = atk & b.occupancy[opp];
-                U64 myDef = atk & b.occupancy[col];
-                
-                if(oppAtk && !myDef) {
-                    // Completely hanging
-                    int weakestAttacker = KING;
-                    U64 a = oppAtk;
-                    while(a) {
-                        int asq = popLSBIdx(a);
-                        int apt = b.pieceOn[asq];
-                        if(apt < weakestAttacker) weakestAttacker = apt;
-                    }
-                    if(weakestAttacker < pt) {
-                        score -= sign * MATERIAL[pt] / 2;
-                    }
-                }
-            }
-        }
-    }
-    return score;
-}
-
-// 5. TRAPPED PIECES (Limited mobility, especially minors)
-static int evalTrapped(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        
-        // Trapped knights (corners with low mobility)
-        U64 knights = b.pieces[col][KNIGHT];
-        while(knights) {
-            int sq = popLSBIdx(knights);
-            int mob = popcount(knightAttacks[sq] & ~b.occupancy[col]);
-            int edgePenalty = 0;
-            int f = sq % 8, r = sq / 8;
-            if(f == 0 || f == 7) edgePenalty += 2;
-            if(r == 0 || r == 7) edgePenalty += 2;
-            
-            if(mob <= 2 && edgePenalty >= 3) {
-                score -= sign * (50 + (3 - mob) * 15);
-            }
-        }
-        
-        // Trapped bishops (blocked by own pawns on edges)
-        U64 bishops = b.pieces[col][BISHOP];
-        while(bishops) {
-            int sq = popLSBIdx(bishops);
-            int mob = popcount(getBishopAttacks(sq, b.occupancy[BOTH]) & ~b.occupancy[col]);
-            int f = sq % 8, r = sq / 8;
-            
-            // Bishop on edge with 1-2 mobility = probably bad
-            if((f == 0 || f == 7) && mob <= 2) {
-                score -= sign * 30;
-            }
-            // Bishop trapped behind own pawns (TOMATO BISHOP)
-            if(mob <= 3) {
-                U64 ownPawns = b.pieces[col][PAWN];
-                int blocked = 0;
-                U64 atk = getBishopAttacks(sq, b.occupancy[BOTH]);
-                while(atk) {
-                    int asq = popLSBIdx(atk);
-                    if(getBit(ownPawns, asq)) blocked++;
-                }
-                if(blocked >= 2) score -= sign * 25;
-            }
-        }
-    }
-    return score;
-}
-
-// 6. X-RAY ATTACKS (Attack through own piece)
-static int evalXrays(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        
-        // Queen x-rays through rook/bishop to enemy king
-        U64 queens = b.pieces[col][QUEEN];
-        while(queens) {
-            int sq = popLSBIdx(queens);
-            int oppKing = b.pieces[opp][KING] ? lsb(b.pieces[opp][KING]) : -1;
-            if(oppKing < 0) continue;
-            
-            // Check if queen aligns with king with one piece between
-            U64 occ = b.occupancy[BOTH];
-            U64 diag = getBishopAttacks(sq, occ);
-            U64 line = getRookAttacks(sq, occ);
-            
-            // Remove queen's own attacks, see what x-rays
-            U64 occWithout = occ & ~b.pieces[col][QUEEN];
-            U64 xrayDiag = getBishopAttacks(sq, occWithout) & ~diag;
-            U64 xrayLine = getRookAttacks(sq, occWithout) & ~line;
-            
-            if((xrayDiag | xrayLine) & (1ULL << oppKing)) {
-                score += sign * 40;  // X-ray on king
-            }
-        }
-    }
-    return score;
-}
-
-// 7. TACTICAL MOTIFS COMBINATION
-// Piece attacked by lower value piece = tactical vulnerability
-static int evalTacticalVulnerability(const Board &b) {
-    int score = 0;
-    for(int col = 0; col < 2; col++) {
-        int sign = (col == WHITE) ? 1 : -1;
-        int opp = col ^ 1;
-        
-        for(int pt = BISHOP; pt <= QUEEN; pt++) {
-            U64 bb = b.pieces[col][pt];
-            while(bb) {
-                int sq = popLSBIdx(bb);
-                U64 atk = allAttackers(b, sq, b.occupancy[BOTH]);
-                U64 oppAtk = atk & b.occupancy[opp];
-                
-                if(!oppAtk) continue;
-                
-                // Find weakest attacker
-                int weakest = KING;
-                U64 a = oppAtk;
-                while(a) {
-                    int asq = popLSBIdx(a);
-                    int apt = b.pieceOn[asq];
-                    if(apt < weakest) weakest = apt;
-                }
-                
-                // Attacked by lower value = bad
-                if(weakest < pt) {
-                    // Check if defended
-                    U64 myDef = atk & b.occupancy[col];
-                    if(!myDef) {
-                        score -= sign * (MATERIAL[pt] - MATERIAL[weakest]) / 2;
-                    }
-                }
-            }
-        }
-    }
-    return score;
-}
-
-// MASTER TACTICAL EVALUATOR
 static int evalTactical(const Board &b) {
-    return evalForks(b) 
-         + evalPins(b) 
-         + evalDiscovered(b) 
-         + evalHanging(b) 
-         + evalTrapped(b) 
-         + evalXrays(b)
-         + evalTacticalVulnerability(b);
+    return 0;  // TEMPORARILY DISABLED – will cause blunders otherwise
 }
 
 // ============================================================
@@ -1135,7 +776,6 @@ int evaluate(const Board &b) {
     
     // Pawn structure
     int pawnMg = 0, pawnEg = 0;
-    // Simple pawn eval (no hash for now - add later if needed)
     for(int col = 0; col < 2; col++) {
         int sign = (col == WHITE) ? 1 : -1;
         int opp = col ^ 1;
@@ -1328,10 +968,8 @@ int evaluate(const Board &b) {
         }
     }
     
-    // 🔥 TACTICAL EVALUATION (THE MAIN UPGRADE)
-    if(!isEndgame) {
-        score += evalTactical(b);
-    }
+    // TACTICAL EVALUATION – DISABLED
+    // score += evalTactical(b);
     
     return (b.side == WHITE) ? score : -score;
 }
@@ -1342,7 +980,8 @@ int evaluate(const Board &b) {
 
 static const int INF = 1000000;
 static const int MATE = 900000;
-static const int MAX_PLY = 64;
+static const int MAX_PLY = 256;
+static const int MAX_SEARCH_DEPTH = 245;
 
 static Move killers[MAX_PLY][2];
 static int history[2][64][64];
@@ -1376,72 +1015,20 @@ static inline void checkTime(SearchInfo &info) {
             if(e >= info.timeLimit)
             info.stop = true;
     }
+}
 
-    }
-
-// SEE - Simplified but correct
+// Disabled SEE – simple capture scoring
 static bool seeGe(const Board &b, Move m, int threshold) {
-    int from = moveFrom(m), to = moveTo(m);
-    int captured = moveEP(m) ? PAWN : b.pieceOn[to];
-    if(captured == NO_PIECE) return threshold <= 0;
-    
-    int gain = SEE_VAL[captured] - threshold;
-    if(gain < 0) return false;
-    
-    int attacker = b.pieceOn[from];
-    gain -= SEE_VAL[attacker];
-    if(gain >= 0) return true;
-    
-    U64 occ = b.occupancy[BOTH];
-    clearBit(occ, from);
-    
-    U64 attackers = allAttackers(b, to, occ);
-    int side = b.side ^ 1;
-    
-    while(true) {
-        side ^= 1;
-        attackers &= occ;
-        U64 sideAtk = attackers & b.occupancy[side];
-        if(!sideAtk) break;
-        
-        int pt;
-        U64 cand;
-        for(pt = PAWN; pt <= KING; pt++) {
-            cand = sideAtk & b.pieces[side][pt];
-            if(cand) break;
-        }
-        if(pt > KING) break;
-        
-        int sq = lsb(cand);
-        clearBit(occ, sq);
-        
-        if(pt == PAWN || pt == BISHOP || pt == QUEEN)
-            attackers |= getBishopAttacks(to, occ) & (b.pieces[WHITE][BISHOP] | b.pieces[BLACK][BISHOP] |
-                                                      b.pieces[WHITE][QUEEN] | b.pieces[BLACK][QUEEN]);
-        if(pt == ROOK || pt == QUEEN)
-            attackers |= getRookAttacks(to, occ) & (b.pieces[WHITE][ROOK] | b.pieces[BLACK][ROOK] |
-                                                    b.pieces[WHITE][QUEEN] | b.pieces[BLACK][QUEEN]);
-        
-        gain = -gain - 1 - SEE_VAL[pt];
-        if(gain >= 0) {
-            if(pt == KING && (attackers & b.occupancy[side ^ 1]))
-                side ^= 1;
-            break;
-        }
-    }
-    return b.side != side;
+    (void)b; (void)m; (void)threshold;
+    return true; // always assume good – we don't use SEE pruning now
 }
 
 static int scoreMove(const Board &b, Move m, int ply) {
     int s = 0;
     if(moveCapture(m)) {
-        int att = b.pieceOn[moveFrom(m)];
         int vic = moveEP(m) ? PAWN : b.pieceOn[moveTo(m)];
-        if(att != NO_PIECE && vic != NO_PIECE) {
-            if(seeGe(b, m, 1)) s = 10000 + MATERIAL[vic] - MATERIAL[att];
-            else if(seeGe(b, m, 0)) s = 9000 + MATERIAL[vic] - MATERIAL[att];
-            else s = 2000 + MATERIAL[vic] - MATERIAL[att];
-        }
+        // simple high capture bonus (no SEE)
+        s = 10000 + MATERIAL[vic];
     }
     if(movePromo(m)) s += 9500 + (movePromo(m) == QUEEN ? 900 : 300);
     if(!moveCapture(m) && !movePromo(m)) {
@@ -1559,7 +1146,7 @@ int quiescence(Board &b, int alpha, int beta, int ply, SearchInfo &info) {
     }
     
     for(int i = 0; i < ml.count; i++) {
-        // Delta pruning
+        // Delta pruning (keep it, it's safe)
         if(!inChk && moveCapture(ml.moves[i])) {
             int vic = b.pieceOn[moveTo(ml.moves[i])];
             if(vic != NO_PIECE && standPat + MATERIAL[vic] + 200 < alpha) continue;
@@ -1661,26 +1248,12 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
         bool isPro = movePromo(m);
         bool givesCheck = b.inCheck();
         
-        // SEE pruning
-        if(!inChk && bestScore > -MATE / 2) {
+        // SEE pruning – disabled completely
+        /* if(!inChk && bestScore > -MATE / 2) {
             if(isCap && !isPro) {
-                if(!seeGe(b, m, -90 * depth)) {
-                    b.unmakeMove(m, u);
-                    continue;
-                }
-            } else if(!isCap && !isPro && !givesCheck) {
-                int lmrDepth = std::max(0, depth - 1 - (mc > 6 ? 2 : mc > 3 ? 1 : 0));
-                if(rawEval + 60 + 120 * lmrDepth <= alpha && lmrDepth < 7) {
-                    b.unmakeMove(m, u);
-                    continue;
-                }
-                int maxMoves = 3 + depth * depth / (improving ? 1 : 2);
-                if(mc > maxMoves && depth <= 6) {
-                    b.unmakeMove(m, u);
-                    continue;
-                }
-            }
-        }
+                if(!seeGe(b, m, -50 * depth)) { ... }
+            } else if(!isCap && !isPro && !givesCheck) { ... }
+        } */
         
         int newDepth = depth - 1 + (givesCheck ? 1 : 0);
         int score;
@@ -1717,13 +1290,14 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
                     killers[ply][1] = killers[ply][0];
                     killers[ply][0] = m;
                     int bonus = std::min(depth * depth, 400);
-                    history[b.side ^ 1][moveFrom(m)][moveTo(m)] += bonus;
-                    if(history[b.side ^ 1][moveFrom(m)][moveTo(m)] > 8000)
-                        history[b.side ^ 1][moveFrom(m)][moveTo(m)] = 8000;
+                    // FIXED: use b.side (the side that just moved)
+                    history[b.side][moveFrom(m)][moveTo(m)] += bonus;
+                    if(history[b.side][moveFrom(m)][moveTo(m)] > 8000)
+                        history[b.side][moveFrom(m)][moveTo(m)] = 8000;
                     
                     for(int j = 0; j < i; j++) {
                         if(!moveCapture(ml.moves[j]) && !movePromo(ml.moves[j])) {
-                            history[b.side ^ 1][moveFrom(ml.moves[j])][moveTo(ml.moves[j])] -= bonus / 4;
+                            history[b.side][moveFrom(ml.moves[j])][moveTo(ml.moves[j])] -= bonus / 4;
                         }
                     }
                 }
@@ -1767,50 +1341,6 @@ static const int N_BOOK = 12;
 static int g_bookLine = -1;
 
 static Move getBookMove(const Board &b) {
-    if(b.fullMove == 1 && b.side == WHITE) {
-        g_bookLine = rand() % N_BOOK;
-    }
-    if(g_bookLine < 0) return 0;
-    
-    int idx = (b.fullMove - 1) * 2 + (b.side == BLACK ? 1 : 0);
-    const char* mv = BOOK[g_bookLine].moves[idx];
-    if(!mv) return 0;
-    
-    // Verify position
-    Board tmp;
-    tmp.setFromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    for(int i = 0; i < idx; i++) {
-        const char* bm = BOOK[g_bookLine].moves[i];
-        if(!bm) return 0;
-        Move m = 0;
-        // Simple move parsing for book
-        int from = (bm[0] - 'a') + (bm[1] - '1') * 8;
-        int to = (bm[2] - 'a') + (bm[3] - '1') * 8;
-        MoveList ml2; generateMoves(tmp, ml2);
-        for(int j = 0; j < ml2.count; j++) {
-            if(moveFrom(ml2.moves[j]) == from && moveTo(ml2.moves[j]) == to) {
-                m = ml2.moves[j]; break;
-            }
-        }
-        if(!m) { g_bookLine = -1; return 0; }
-        UndoInfo u2; tmp.makeMove(m, u2);
-    }
-    
-    for(int c = 0; c < 2; c++)
-        for(int p = 0; p < 6; p++)
-            if(tmp.pieces[c][p] != b.pieces[c][p]) { g_bookLine = -1; return 0; }
-    if(tmp.side != b.side) { g_bookLine = -1; return 0; }
-    
-    int from = (mv[0] - 'a') + (mv[1] - '1') * 8;
-    int to = (mv[2] - 'a') + (mv[3] - '1') * 8;
-    MoveList ml2; generateMoves(b, ml2);
-    for(int j = 0; j < ml2.count; j++) {
-        if(moveFrom(ml2.moves[j]) == from && moveTo(ml2.moves[j]) == to) {
-            UndoInfo u2; Board t = b;
-            if(t.makeMove(ml2.moves[j], u2)) return ml2.moves[j];
-        }
-    }
-    g_bookLine = -1;
     return 0;
 }
 
@@ -1819,11 +1349,7 @@ static Move getBookMove(const Board &b) {
 // ============================================================
 
 Move bestMove(Board &b, int depth, int timeLimitMs) {
-    // initZobrist();
-    // initTT();
-    // initLMR();
-    // clearTables();
-    // memset(evalCache, 0, sizeof(evalCache));
+    depth = std::max(1, std::min(depth, MAX_SEARCH_DEPTH));
 
     SearchInfo info;
     info.depth = depth;
@@ -2011,7 +1537,7 @@ Move bestMove(Board &b, int depth, int timeLimitMs) {
 
             // soft stop
             if(timeLimitMs > 0 &&
-                depth >= 64 &&
+                depth >= MAX_SEARCH_DEPTH &&
                d >= 6 &&
                elapsed >= timeLimitMs * 60 / 100)
             {
@@ -2170,31 +1696,36 @@ void uciLoop() {
             }
         }
         else if(token == "go") {
-            int depth = 64, movetime = -1, wtime = -1, btime = -1, winc = 0, binc = 0;
+            int depth = MAX_SEARCH_DEPTH, movetime = -1, wtime = -1, btime = -1, winc = 0, binc = 0;
             bool ds = false, ms = false;
             while(ss >> token) {
-                if(token == "depth") { ss >> depth; ds = true; }
+                if(token == "depth") {
+                    ss >> depth;
+                    depth = std::max(1, std::min(depth, MAX_SEARCH_DEPTH));
+                    ds = true;
+                }
                 else if(token == "movetime") { ss >> movetime; ms = true; }
                 else if(token == "wtime") ss >> wtime;
                 else if(token == "btime") ss >> btime;
                 else if(token == "winc") ss >> winc;
                 else if(token == "binc") ss >> binc;
-                else if(token == "infinite") { depth = 64; ds = true; ms = false; movetime = -1; }
+                else if(token == "infinite") { depth = MAX_SEARCH_DEPTH; ds = true; ms = false; movetime = -1; }
             }
+
             if(!ms && wtime > 0 && btime > 0) {
                 int myTime = (b.side == WHITE) ? wtime : btime;
                 int myInc = (b.side == WHITE) ? winc : binc;
 
                 int usable = std::max(0, myTime - 30);
-                movetime = usable / 15 + (myInc * 4) / 5;
+                movetime = usable / 30 + myInc / 2;  // safer than /15
                 movetime = std::max(120, std::min(movetime, usable / 2));
             }
-            // defaults
-            if(!ds && !ms) depth = 64;
 
-            //KEY FIX
+            if(!ds && !ms) depth = MAX_SEARCH_DEPTH;
+
             if(ds && !ms) movetime = 1000000000;
-            else if (movetime < 0) movetime = 50000;
+            else if(movetime < 0) movetime = 50000;
+
             bestMove(b, depth, movetime);
         }
         else if(token == "d") {
