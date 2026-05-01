@@ -970,6 +970,10 @@ int evaluate(const Board &b) {
     
     // TACTICAL EVALUATION – DISABLED
     // score += evalTactical(b);
+
+    int rawMat = 0;
+for(int c=0;c<2;c++) for(int p=0;p<6;p++) rawMat += popcount(b.pieces[c][p]) * MATERIAL[p];
+if(rawMat == 0) std::cout << "ERROR: No pieces found!" << std::endl;
     
     return (b.side == WHITE) ? score : -score;
 }
@@ -1349,6 +1353,7 @@ static Move getBookMove(const Board &b) {
 // ============================================================
 
 Move bestMove(Board &b, int depth, int timeLimitMs) {
+    memset(evalCache, 0, sizeof(evalCache));  // Clear eval cache
     depth = std::max(1, std::min(depth, MAX_SEARCH_DEPTH));
 
     SearchInfo info;
