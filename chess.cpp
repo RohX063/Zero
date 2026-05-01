@@ -8,10 +8,6 @@
 #include <algorithm>
 
 // ============================================================
-//  TYPES & CONSTANTS
-// ============================================================
-
-// ============================================================
 //  ATTACK TABLES (Magic Bitboards)
 // ============================================================
 
@@ -192,8 +188,6 @@ void initAttacks() {
         }
     }
 }
-
-
 
 // ============================================================
 //  ZOBRIST HASHING
@@ -742,11 +736,12 @@ static const int PASSED_BONUS_EG[8] = {0, 10, 20, 35, 60, 95, 140, 0};
 //  TACTICAL EVALUATION — DISABLED (returns 0 for now)
 // ============================================================
 static int evalTactical(const Board &b) {
-    return 0;  // TEMPORARILY DISABLED – will cause blunders otherwise
+    (void)b;
+    return 0;
 }
 
 // ============================================================
-//  MAIN EVALUATION
+//  MAIN EVALUATION (FIXED — always non-zero for PST)
 // ============================================================
 
 static inline int tapered(int mg, int eg, int phase) {
@@ -759,19 +754,147 @@ static inline int chebyshevDist(int a, int b) {
 
 int evaluate(const Board &b) {
     int score = 0;
-    for (int col = 0; col < 2; col++) {
+    
+    // Phase detection
+    static const int PHASE_WEIGHT[6] = {0, 1, 1, 2, 4, 0};
+    int phase = 0;
+    for(int c = 0; c < 2; c++)
+        for(int p = KNIGHT; p <= QUEEN; p++)
+            phase += PHASE_WEIGHT[p] * popcount(b.pieces[c][p]);
+    phase = std::min(phase, 24);
+    
+    bool isEndgame = (phase <= 10);
+    U64 allOcc = b.occupancy[BOTH];
+    U64 center4 = (1ULL << D4) | (1ULL << E4) | (1ULL << D5) | (1ULL << E5);
+    
+    // **Material + PST (always non-zero)**
+    for(int col = 0; col < 2; col++) {
         int sign = (col == WHITE) ? 1 : -1;
-        for (int pt = PAWN; pt <= KING; pt++) {
-            score += sign * popcount(b.pieces[col][pt]) * MATERIAL[pt];
+        int opp = col ^ 1;
+        int kingSq = b.pieces[col][KING] ? lsb(b.pieces[col][KING]) : 0;
+        int oppKingSq = b.pieces[opp][KING] ? lsb(b.pieces[opp][KING]) : 0;
+        
+        for(int pt = 0; pt < 6; pt++) {
+            U64 bb = b.pieces[col][pt];
+            while(bb) {
+                int sq = popLSBIdx(bb);
+                int pstSq = (col == WHITE) ? sq : (sq ^ 56);
+                int pstVal;
+                if(pt == KING) {
+                    int mg = PST_KING_MG[pstSq];
+                    int eg = PST_KING_EG[pstSq];
+                    pstVal = tapered(mg, eg, phase);
+                } else {
+                    pstVal = PST[pt][pstSq];
+                }
+                score += sign * (MATERIAL[pt] + pstVal);
+            }
+        }
+        
+        // Knight mobility + outposts
+        U64 knights = b.pieces[col][KNIGHT];
+        while(knights) {
+            int sq = popLSBIdx(knights);
+            U64 atk = knightAttacks[sq] & ~b.occupancy[col];
+            int mob = popcount(atk);
+            score += sign * tapered(KNIGHT_MOB[std::min(mob, 8)], KNIGHT_MOB[std::min(mob, 8)] * 7 / 10, phase);
+            bool supported = (pawnAttacks[opp][sq] & b.pieces[col][PAWN]) != 0;
+            bool attackedByPawn = (pawnAttacks[col][sq] & b.pieces[opp][PAWN]) != 0;
+            bool inEnemyHalf = (col == WHITE) ? (sq / 8 >= 3) : (sq / 8 <= 4);
+            if(inEnemyHalf && supported && !attackedByPawn)
+                score += sign * tapered(18, 10, phase);
+        }
+        
+        // Bishop mobility + pair
+        U64 bishops = b.pieces[col][BISHOP];
+        int bishopCount = popcount(bishops);
+        if(bishopCount >= 2) score += sign * 40;
+        while(bishops) {
+            int sq = popLSBIdx(bishops);
+            U64 atk = getBishopAttacks(sq, allOcc) & ~b.occupancy[col];
+            int mob = popcount(atk);
+            score += sign * tapered(BISHOP_MOB[std::min(mob, 13)], BISHOP_MOB[std::min(mob, 13)] * 9 / 10, phase);
+            if(atk & center4) score += sign * 8;
+        }
+        
+        // Rook mobility + open files
+        U64 rooks = b.pieces[col][ROOK];
+        while(rooks) {
+            int sq = popLSBIdx(rooks);
+            int file = sq % 8;
+            U64 atk = getRookAttacks(sq, allOcc) & ~b.occupancy[col];
+            int mob = popcount(atk);
+            score += sign * tapered(ROOK_MOB[std::min(mob, 14)], ROOK_MOB[std::min(mob, 14)] * 12 / 10, phase);
+            
+            U64 fileMask = 0;
+            for(int r = 0; r < 8; r++) setBit(fileMask, r * 8 + file);
+            bool noOwnPawn = !(b.pieces[col][PAWN] & fileMask);
+            bool noOppPawn = !(b.pieces[opp][PAWN] & fileMask);
+            if(noOwnPawn && noOppPawn) score += sign * tapered(30, 20, phase);
+            else if(noOwnPawn) score += sign * tapered(15, 8, phase);
+            
+            int rank7 = (col == WHITE) ? 6 : 1;
+            if(sq / 8 == rank7) score += sign * tapered(20, 30, phase);
+        }
+        
+        // Queen mobility
+        U64 queens = b.pieces[col][QUEEN];
+        while(queens) {
+            int sq = popLSBIdx(queens);
+            U64 atk = getQueenAttacks(sq, allOcc) & ~b.occupancy[col];
+            int mob = popcount(atk);
+            score += sign * tapered(QUEEN_MOB[std::min(mob, 27)], QUEEN_MOB[std::min(mob, 27)] * 7 / 10, phase);
+            int qDist = chebyshevDist(sq, oppKingSq);
+            score += sign * std::max(0, 6 - qDist) * 2;
+        }
+        
+        // Basic king safety
+        U64 kingZone = kingAttacks[oppKingSq] | (1ULL << oppKingSq);
+        int attackScore = 0, attackers = 0;
+        for(int pt = KNIGHT; pt <= QUEEN; pt++) {
+            U64 bb = b.pieces[col][pt];
+            while(bb) {
+                int sq = popLSBIdx(bb);
+                U64 atk = (pt == KNIGHT) ? knightAttacks[sq] :
+                          (pt == BISHOP) ? getBishopAttacks(sq, allOcc) :
+                          (pt == ROOK) ? getRookAttacks(sq, allOcc) :
+                          getQueenAttacks(sq, allOcc);
+                U64 hit = atk & kingZone;
+                if(hit) {
+                    attackers++;
+                    attackScore += (pt == KNIGHT || pt == BISHOP) ? 20 : (pt == ROOK) ? 40 : 80;
+                }
+            }
+        }
+        if(attackers >= 2) {
+            int danger = attackScore * attackers / 4;
+            score += sign * danger;
         }
     }
-    // Add a tiny random or PST to break ties
-    for (int sq = 0; sq < 64; sq++) {
-        if (b.pieceOn[sq] != NO_PIECE) {
-            int pst = (b.colorOn[sq] == WHITE) ? PST[b.pieceOn[sq]][sq] : -PST[b.pieceOn[sq]][sq^56];
-            score += pst;
+    
+    // Endgame mop-up
+    if(isEndgame) {
+        int materialScore = 0;
+        for(int p = PAWN; p <= QUEEN; p++)
+            materialScore += MATERIAL[p] * (popcount(b.pieces[WHITE][p]) - popcount(b.pieces[BLACK][p]));
+        
+        if(abs(materialScore) > 200) {
+            int winningSide = (materialScore > 0) ? WHITE : BLACK;
+            int winSign = (winningSide == WHITE) ? 1 : -1;
+            int wKing = b.pieces[WHITE][KING] ? lsb(b.pieces[WHITE][KING]) : 0;
+            int bKing = b.pieces[BLACK][KING] ? lsb(b.pieces[BLACK][KING]) : 0;
+            int loserKing = (winningSide == WHITE) ? bKing : wKing;
+            int winnerKing = (winningSide == WHITE) ? wKing : bKing;
+            
+            int lf = loserKing % 8, lr = loserKing / 8;
+            int cornerPush = std::max(3 - lf, lf - 4) + std::max(3 - lr, lr - 4);
+            score += winSign * cornerPush * 10;
+            int dist = chebyshevDist(winnerKing, loserKing);
+            score += winSign * (7 - dist) * 8;
         }
     }
+    
+    // Final side adjustment
     return (b.side == WHITE) ? score : -score;
 }
 
@@ -808,27 +931,19 @@ static void clearTables() {
 
 static inline void checkTime(SearchInfo &info) {
     if(info.timeLimit <= 0) return;
-
     if((info.nodes & 155) == 0) {
         auto e = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - info.startTime).count();
-
-            if(e >= info.timeLimit)
+        if(e >= info.timeLimit)
             info.stop = true;
     }
 }
 
-// Disabled SEE – simple capture scoring
-static bool seeGe(const Board &b, Move m, int threshold) {
-    (void)b; (void)m; (void)threshold;
-    return true; // always assume good – we don't use SEE pruning now
-}
-
+// Simple capture scoring (no SEE for now)
 static int scoreMove(const Board &b, Move m, int ply) {
     int s = 0;
     if(moveCapture(m)) {
         int vic = moveEP(m) ? PAWN : b.pieceOn[moveTo(m)];
-        // simple high capture bonus (no SEE)
         s = 10000 + MATERIAL[vic];
     }
     if(movePromo(m)) s += 9500 + (movePromo(m) == QUEEN ? 900 : 300);
@@ -867,7 +982,6 @@ struct TTEntry {
     int16_t depth;
     int8_t flag;
 };
-
 static const int TT_SIZE = 1 << 22;
 static TTEntry TT[TT_SIZE];
 static bool ttInited = false;
@@ -925,7 +1039,6 @@ int quiescence(Board &b, int alpha, int beta, int ply, SearchInfo &info) {
     generateMoves(b, ml);
     bool inChk = b.inCheck();
     
-    // Filter moves
     int scores[256], cnt = 0;
     for(int i = 0; i < ml.count; i++) {
         if(inChk || moveCapture(ml.moves[i])) {
@@ -935,7 +1048,6 @@ int quiescence(Board &b, int alpha, int beta, int ply, SearchInfo &info) {
     }
     ml.count = cnt;
     
-    // Sort
     for(int i = 0; i < ml.count - 1; i++) {
         int best = i;
         for(int j = i + 1; j < ml.count; j++)
@@ -947,17 +1059,14 @@ int quiescence(Board &b, int alpha, int beta, int ply, SearchInfo &info) {
     }
     
     for(int i = 0; i < ml.count; i++) {
-        // Delta pruning (keep it, it's safe)
         if(!inChk && moveCapture(ml.moves[i])) {
             int vic = b.pieceOn[moveTo(ml.moves[i])];
             if(vic != NO_PIECE && standPat + MATERIAL[vic] + 200 < alpha) continue;
         }
-        
         UndoInfo u;
         if(!b.makeMove(ml.moves[i], u)) continue;
         int score = -quiescence(b, -beta, -alpha, ply + 1, info);
         b.unmakeMove(ml.moves[i], u);
-        
         if(info.stop) return alpha;
         if(score >= beta) return beta;
         if(score > alpha) alpha = score;
@@ -979,19 +1088,16 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
     if(ply > 0 && b.halfMove >= 100) return 0;
     if(ply >= MAX_PLY - 1) return evaluateCached(b);
     
-    // Mate distance pruning
     alpha = std::max(alpha, -(MATE - ply));
     beta = std::min(beta, MATE - ply - 1);
     if(alpha >= beta) return alpha;
     
-    // TT probe
     U64 hash = hashBoard(b);
     Move ttMv = 0;
     int ttScore;
     if(ply > 0 && ttProbe(hash, depth, alpha, beta, ttScore, ttMv))
         return ttScore;
     
-    // Static eval
     int rawEval = evaluateCached(b);
     staticEvalStack[ply] = rawEval;
     bool improving = (ply >= 2) && (rawEval > staticEvalStack[ply - 2]);
@@ -1015,17 +1121,14 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
             b.side ^= 1;
             if(b.side == WHITE) b.fullMove++;
             b.recalcOccupancy();
-            
             int R = 3 + depth / 3 + std::min(3, (rawEval - beta) / 200);
             int ns = -alphaBeta(b, -beta, -beta + 1, depth - 1 - R, ply + 1, info, false);
             nu.restore(b);
-            
             if(info.stop) return 0;
             if(ns >= beta && ns < MATE / 2) return beta;
         }
     }
     
-    // IIR
     if(depth >= 4 && ttMv == 0) depth--;
     
     MoveList ml;
@@ -1042,24 +1145,15 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
         Move m = ml.moves[i];
         UndoInfo u;
         if(!b.makeMove(m, u)) continue;
-        
         hasLegal = true;
         mc++;
         bool isCap = moveCapture(m) || moveEP(m);
         bool isPro = movePromo(m);
         bool givesCheck = b.inCheck();
         
-        // SEE pruning – disabled completely
-        /* if(!inChk && bestScore > -MATE / 2) {
-            if(isCap && !isPro) {
-                if(!seeGe(b, m, -50 * depth)) { ... }
-            } else if(!isCap && !isPro && !givesCheck) { ... }
-        } */
-        
         int newDepth = depth - 1 + (givesCheck ? 1 : 0);
         int score;
         
-        // LMR
         bool doLMR = newDepth >= 2 && mc > 2 && !isCap && !isPro && !inChk && ply > 0 && !givesCheck;
         
         if(mc == 1) {
@@ -1067,10 +1161,8 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
         } else if(doLMR) {
             int R = lmrTable[std::min(63, std::max(0, newDepth))][std::min(63, std::max(0, mc))];
             if(!improving) R++;
-            
             int reducedDepth = std::max(1, newDepth - R);
             score = -alphaBeta(b, -alpha - 1, -alpha, reducedDepth, ply + 1, info, true);
-            
             if(score > alpha) {
                 score = -alphaBeta(b, -beta, -alpha, newDepth, ply + 1, info, true);
             }
@@ -1091,11 +1183,10 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
                     killers[ply][1] = killers[ply][0];
                     killers[ply][0] = m;
                     int bonus = std::min(depth * depth, 400);
-                    // FIXED: use b.side (the side that just moved)
+                    // Fixed: use b.side (the side that just moved)
                     history[b.side][moveFrom(m)][moveTo(m)] += bonus;
                     if(history[b.side][moveFrom(m)][moveTo(m)] > 8000)
                         history[b.side][moveFrom(m)][moveTo(m)] = 8000;
-                    
                     for(int j = 0; j < i; j++) {
                         if(!moveCapture(ml.moves[j]) && !movePromo(ml.moves[j])) {
                             history[b.side][moveFrom(ml.moves[j])][moveTo(ml.moves[j])] -= bonus / 4;
@@ -1109,257 +1200,127 @@ int alphaBeta(Board &b, int alpha, int beta, int depth, int ply, SearchInfo &inf
     }
     
     if(!hasLegal) return inChk ? -(MATE - ply) : 0;
-    
     ttStore(hash, bestScore, bestMv, depth, (bestScore <= origAlpha) ? TT_ALPHA :
             (bestScore >= beta ? TT_BETA : TT_EXACT));
     return bestScore;
 }
 
 // ============================================================
-//  OPENING BOOK
-// ============================================================
-
-struct BookLine {
-    const char* moves[12];
-};
-
-static const BookLine BOOK[] = {
-    {{"e2e4","e7e5","g1f3","b8c6","f1b5","a7a6","b5a4","g8f6",nullptr}},
-    {{"e2e4","e7e5","g1f3","b8c6","f1c4","f8c5","c2c3","g8f6",nullptr}},
-    {{"e2e4","c7c5","g1f3","d7d6","d2d4","c5d4","f3d4","g8f6","b1c3","a7a6",nullptr}},
-    {{"e2e4","e7e6","d2d4","d7d5","b1c3","g8f6","c1g5",nullptr}},
-    {{"d2d4","d7d5","c2c4","e7e6","b1c3","g8f6","c1g5","f8e7",nullptr}},
-    {{"d2d4","g8f6","c2c4","g7g6","b1c3","f8g7","e2e4","d7d6","g1f3",nullptr}},
-    {{"c2c4","e7e5","b1c3","g8f6","g1f3","b8c6","g2g3",nullptr}},
-    {{"d2d4","d7d5","g1f3","g8f6","c1f4","e7e6","e2e3",nullptr}},
-    {{"e2e4","c7c6","d2d4","d7d5","b1c3","g7g6",nullptr}},
-    {{"d2d4","g8f6","c2c4","e7e6","b1c3","f8b4","e2e3",nullptr}},
-    {{"d2d4","d7d5","c2c4","c7c6","g1f3","g8f6","b1c3","e7e6",nullptr}},
-    {{"e2e4","g7g6","d2d4","f8g7","b1c3","d7d6","g1f3",nullptr}},
-};
-
-static const int N_BOOK = 12;
-static int g_bookLine = -1;
-
-static Move getBookMove(const Board &b) {
-    return 0;
-}
-
-// ============================================================
-//  BEST MOVE / UCI
+//  BEST MOVE (no book)
 // ============================================================
 
 Move bestMove(Board &b, int depth, int timeLimitMs) {
-    memset(evalCache, 0, sizeof(evalCache));  // Clear eval cache
     depth = std::max(1, std::min(depth, MAX_SEARCH_DEPTH));
-
+    
     SearchInfo info;
     info.depth = depth;
     info.nodes = 0;
     info.stop = false;
     info.timeLimit = timeLimitMs;
     info.startTime = std::chrono::steady_clock::now();
-
-    // ───────────────── OPENING BOOK ─────────────────
-    Move bookMv = getBookMove(b);
-    if(bookMv) {
-        std::string bm;
-        bm += char('a' + moveFrom(bookMv) % 8);
-        bm += char('1' + moveFrom(bookMv) / 8);
-        bm += char('a' + moveTo(bookMv) % 8);
-        bm += char('1' + moveTo(bookMv) / 8);
-
-        if(movePromo(bookMv)) {
-            const char pr[] = {'?', 'n', 'b', 'r', 'q'};
-            bm += pr[movePromo(bookMv)];
-        }
-
-       std::cout << "info depth 0 score cp 20 nodes 1 time 0 pv "
-                  << bm << "\n";
-        std::cout << "bestmove " << bm << "\n";
-        return bookMv;
-    }
-
-    // ───────────────── LEGAL MOVES ─────────────────
+    
+    // Clear eval cache for this search
+    memset(evalCache, 0, sizeof(evalCache));
+    
+    // Generate legal moves
     MoveList ml;
     generateMoves(b, ml);
-
     MoveList legal;
     UndoInfo tu;
-
     for(int i = 0; i < ml.count; i++) {
         Board t = b;
         if(t.makeMove(ml.moves[i], tu))
             legal.add(ml.moves[i]);
     }
-
     if(legal.count == 0) {
         std::cout << "bestmove 0000\n";
         return 0;
     }
-
+    
     Move best = legal.moves[0];
     int bestScore = -INF;
-
-    // ───────────────── ITERATIVE DEEPENING ─────────────────
+    
+    // Iterative deepening
     for(int d = 1; d <= depth && !info.stop; d++) {
         sortMoves(b, legal, best, 0);
-
         int asp = INF;
-
-        int alpha = (asp == INF || bestScore <= -MATE/2)
-                    ? -INF : bestScore - asp;
-
-        int beta  = (asp == INF || bestScore <= -MATE/2)
-                    ? INF : bestScore + asp;
-
+        int alpha = (asp == INF || bestScore <= -MATE/2) ? -INF : bestScore - asp;
+        int beta  = (asp == INF || bestScore <= -MATE/2) ?  INF : bestScore + asp;
         int iterBest = -INF;
         Move iterMv = best;
-
+        
         while(!info.stop) {
-
-            int localAlpha = alpha;
-            int localBeta  = beta;
-
+            int localAlpha = alpha, localBeta = beta;
             iterBest = -INF;
-
             for(int i = 0; i < legal.count && !info.stop; i++) {
-
                 UndoInfo u;
-
-                if(!b.makeMove(legal.moves[i], u))
-                    continue;
-
+                if(!b.makeMove(legal.moves[i], u)) continue;
                 int score;
-
                 if(i == 0) {
-                    score = -alphaBeta(
-                        b,
-                        -localBeta,
-                        -localAlpha,
-                        d - 1,
-                        1,
-                        info,
-                        true
-                    );
+                    score = -alphaBeta(b, -localBeta, -localAlpha, d-1, 1, info, true);
+                } else {
+                    score = -alphaBeta(b, -localAlpha-1, -localAlpha, d-1, 1, info, true);
+                    if(score > localAlpha && score < localBeta)
+                        score = -alphaBeta(b, -localBeta, -localAlpha, d-1, 1, info, true);
                 }
-                else {
-                    score = -alphaBeta(
-                        b,
-                        -localAlpha - 1,
-                        -localAlpha,
-                        d - 1,
-                        1,
-                        info,
-                        true
-                    );
-
-                    if(score > localAlpha && score < localBeta) {
-                        score = -alphaBeta(
-                            b,
-                            -localBeta,
-                            -localAlpha,
-                            d - 1,
-                            1,
-                            info,
-                            true
-                        );
-                    }
-                }
-
                 b.unmakeMove(legal.moves[i], u);
-
-                if(info.stop)
-                    break;
-
-                if(score > iterBest) {
-                    iterBest = score;
-                    iterMv = legal.moves[i];
-                }
-
-                if(score > localAlpha)
-                    localAlpha = score;
+                if(info.stop) break;
+                if(score > iterBest) { iterBest = score; iterMv = legal.moves[i]; }
+                if(score > localAlpha) localAlpha = score;
             }
-
-            if(asp == INF || d < 5 || info.stop)
-                break;
-
+            if(asp == INF || d < 5 || info.stop) break;
             if(iterBest <= alpha) {
-                asp = std::min(800, asp * 2);
+                asp = std::min(800, asp*2);
                 alpha = std::max(-INF, iterBest - asp);
                 continue;
             }
-
             if(iterBest >= beta) {
-                asp = std::min(800, asp * 2);
+                asp = std::min(800, asp*2);
                 beta = std::min(INF, iterBest + asp);
                 continue;
             }
-
             break;
         }
-
+        
         if(!info.stop) {
-
             best = iterMv;
             bestScore = iterBest;
-
-            // Move ordering: best to front
+            // move best to front
             for(int i = 0; i < legal.count; i++) {
                 if(legal.moves[i] == best) {
-                    for(int j = i; j > 0; j--)
-                        legal.moves[j] = legal.moves[j - 1];
-
+                    for(int j = i; j > 0; j--) legal.moves[j] = legal.moves[j-1];
                     legal.moves[0] = best;
                     break;
                 }
             }
-
-            auto elapsed =
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - info.startTime
-                ).count();
-
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - info.startTime).count();
             std::string pv;
             pv += char('a' + moveFrom(best) % 8);
             pv += char('1' + moveFrom(best) / 8);
             pv += char('a' + moveTo(best) % 8);
             pv += char('1' + moveTo(best) / 8);
-
             if(movePromo(best)) {
                 const char pr[] = {'?', 'n', 'b', 'r', 'q'};
                 pv += pr[movePromo(best)];
             }
-
-            std::cout << "info depth " << d
-                      << " score cp " << bestScore
-                      << " nodes " << info.nodes
-                      << " time " << elapsed
+            std::cout << "info depth " << d << " score cp " << bestScore
+                      << " nodes " << info.nodes << " time " << elapsed
                       << " pv " << pv << "\n";
-
-            // soft stop
-            if(timeLimitMs > 0 &&
-                depth >= MAX_SEARCH_DEPTH &&
-               d >= 6 &&
-               elapsed >= timeLimitMs * 60 / 100)
-            {
+            if(timeLimitMs > 0 && depth >= MAX_SEARCH_DEPTH && d >= 6 && elapsed >= timeLimitMs * 60 / 100)
                 info.stop = true;
-            }
         }
     }
-
-    // ───────────────── FINAL BESTMOVE ─────────────────
+    
     std::string bm;
     bm += char('a' + moveFrom(best) % 8);
     bm += char('1' + moveFrom(best) / 8);
     bm += char('a' + moveTo(best) % 8);
     bm += char('1' + moveTo(best) / 8);
-
     if(movePromo(best)) {
         const char pr[] = {'?', 'n', 'b', 'r', 'q'};
         bm += pr[movePromo(best)];
     }
-
     std::cout << "bestmove " << bm << "\n";
     return best;
 }
@@ -1390,37 +1351,29 @@ void divide(Board &b, int depth) {
     UndoInfo u;
     unsigned long long total = 0;
     int legal = 0;
-    
     for(int i = 0; i < ml.count; i++) {
         if(!b.makeMove(ml.moves[i], u)) continue;
         legal++;
         unsigned long long n = perft(b, depth - 1);
         b.unmakeMove(ml.moves[i], u);
-        
         std::string mvStr;
         mvStr += (char)('a' + moveFrom(ml.moves[i]) % 8);
         mvStr += (char)('1' + moveFrom(ml.moves[i]) / 8);
         mvStr += (char)('a' + moveTo(ml.moves[i]) % 8);
         mvStr += (char)('1' + moveTo(ml.moves[i]) / 8);
-        
         std::cout << mvStr << ": " << n << "\n";
         total += n;
     }
     std::cout << "Legal moves: " << legal << "\nTotal: " << total << "\n";
 }
 
-// ============================================================
-// moveToString
-// ============================================================
 std::string moveToStr(Move m) {
     std::string s = "0000";
     int from = moveFrom(m), to = moveTo(m);
-
     s[0] = 'a' + (from % 8);
     s[1] = '1' + (from / 8);
     s[2] = 'a' + (to % 8);
     s[3] = '1' + (to / 8);
-
     if(movePromo(m)) {
         char p='q';
         if(movePromo(m)==ROOK) p='r';
@@ -1436,48 +1389,31 @@ std::string moveToStr(Move m) {
 // ============================================================
 
 void uciLoop() {
-    initAttacks();
-    initZobrist();
-    initTT();
-    initLMR();
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stdin, NULL, _IONBF, 0);
-    
     Board b;
     b.setFromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    
     std::string line, token;
     while(true) {
         if(!std::getline(std::cin, line)) break;
         if(!line.empty() && line.back() == '\r') line.pop_back();
         if(line.empty()) continue;
-        
         std::istringstream ss(line);
         ss >> token;
-        
         if(token == "uci") {
-            std::cout << "id name Zero v14.0 TACTICAL\n"
-                      << "id author Snoopy\n"
-                      << "uciok\n";
-        }
-        else if(token == "isready") {
+            std::cout << "id name Zero v15 FIXED\nid author Snoopy\nuciok\n";
+        } else if(token == "isready") {
             std::cout << "readyok\n";
-        }
-        else if(token == "ucinewgame") {
+        } else if(token == "ucinewgame") {
             b.setFromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
             clearTables();
             memset(TT, 0, sizeof(TT));
             memset(evalCache, 0, sizeof(evalCache));
-            g_bookLine = -1;
-        }
-        else if(token == "position") {
+        } else if(token == "position") {
             std::string pos;
             ss >> pos;
             if(pos == "startpos") {
                 b.setFromFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
                 ss >> token;
-            }
-            else if(pos == "fen") {
+            } else if(pos == "fen") {
                 std::string fen, p;
                 ss >> p;
                 fen = p;
@@ -1498,16 +1434,11 @@ void uciLoop() {
                     }
                 }
             }
-        }
-        else if(token == "go") {
+        } else if(token == "go") {
             int depth = MAX_SEARCH_DEPTH, movetime = -1, wtime = -1, btime = -1, winc = 0, binc = 0;
             bool ds = false, ms = false;
             while(ss >> token) {
-                if(token == "depth") {
-                    ss >> depth;
-                    depth = std::max(1, std::min(depth, MAX_SEARCH_DEPTH));
-                    ds = true;
-                }
+                if(token == "depth") { ss >> depth; depth = std::max(1, std::min(depth, MAX_SEARCH_DEPTH)); ds = true; }
                 else if(token == "movetime") { ss >> movetime; ms = true; }
                 else if(token == "wtime") ss >> wtime;
                 else if(token == "btime") ss >> btime;
@@ -1515,47 +1446,50 @@ void uciLoop() {
                 else if(token == "binc") ss >> binc;
                 else if(token == "infinite") { depth = MAX_SEARCH_DEPTH; ds = true; ms = false; movetime = -1; }
             }
-
             if(!ms && wtime > 0 && btime > 0) {
                 int myTime = (b.side == WHITE) ? wtime : btime;
                 int myInc = (b.side == WHITE) ? winc : binc;
-
                 int usable = std::max(0, myTime - 30);
-                movetime = usable / 30 + myInc / 2;  // safer than /15
+                movetime = usable / 30 + myInc / 2;
                 movetime = std::max(120, std::min(movetime, usable / 2));
             }
-
             if(!ds && !ms) depth = MAX_SEARCH_DEPTH;
-
             if(ds && !ms) movetime = 1000000000;
             else if(movetime < 0) movetime = 50000;
-
             bestMove(b, depth, movetime);
-        }
-        else if(token == "d") {
+        } else if(token == "d") {
             b.print();
-        }
-        else if(token == "eval") {
+        } else if(token == "eval") {
             std::cout << "Evaluation: " << evaluate(b) << "\n";
-        }
-        else if(token == "perft") {
-            int d;
-            ss >> d;
+        } else if(token == "perft") {
+            int d; ss >> d;
             if(d > 0) {
                 auto t1 = std::chrono::steady_clock::now();
                 auto n = perft(b, d);
-                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - t1).count();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t1).count();
                 std::cout << "perft " << d << " = " << n << " (" << ms << " ms)\n";
             }
-        }
-        else if(token == "divide") {
-            int d;
-            ss >> d;
+        } else if(token == "divide") {
+            int d; ss >> d;
             if(d > 0) divide(b, d);
-        }
-        else if(token == "quit" || token == "exit") {
+        } else if(token == "quit" || token == "exit") {
             break;
         }
     }
+}
+
+// ============================================================
+//  MAIN
+// ============================================================
+
+int main() {
+    // Initialize everything before starting UCI
+    initAttacks();
+    initZobrist();
+    initLMR();
+    initTT();
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdin, NULL, _IONBF, 0);
+    uciLoop();
+    return 0;
 }
