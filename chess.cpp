@@ -1634,8 +1634,10 @@ std::string moveToStr(Move m) {
 // ============================================================
 
 void uciLoop() {
+    initAttacks();
     initZobrist();
     initTT();
+    initLMR();
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
     
