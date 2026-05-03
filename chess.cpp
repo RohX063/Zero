@@ -1721,4 +1721,3 @@ void uciLoop(){
         else if(token=="quit"||token=="exit")break;
     }
 }
-
