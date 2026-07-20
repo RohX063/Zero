@@ -14,6 +14,12 @@ Board::Board()
 {
     initialize();
     whiteToMove = true;
+
+    whiteKingSideCastle = true;
+    whiteQueenSideCastle = true;
+
+    blackKingSideCastle = true;
+    blackQueenSideCastle = true;
 }
 
 void Board::clearBoard()
@@ -199,20 +205,100 @@ void Board::makeMove(Move &move)
     move.movedPiece = (Piece)board[move.fromRow][move.fromCol];
     move.capturedPiece = (Piece)board[move.toRow][move.toCol];
 
-    board[move.toRow][move.toCol] =
-        board[move.fromRow][move.fromCol];
+    move.prevWhiteKingSideCastle = whiteKingSideCastle;
+    move.prevWhiteQueenSideCastle = whiteQueenSideCastle;
+    move.prevBlackKingSideCastle = blackKingSideCastle;
+    move.prevBlackQueenSideCastle = blackQueenSideCastle;
 
+    board[move.toRow][move.toCol] = board[move.fromRow][move.fromCol];
     board[move.fromRow][move.fromCol] = EMPTY;
+
+    // Castling rook move
+    if(move.isCastle)
+    {
+        if(move.toRow == 7 && move.toCol == 6)
+        {
+            board[7][5] = WHITE_ROOK;
+            board[7][7] = EMPTY;
+        }
+        else if(move.toRow == 7 && move.toCol == 2)
+        {
+            board[7][3] = WHITE_ROOK;
+            board[7][0] = EMPTY;
+        }
+        else if(move.toRow == 0 && move.toCol == 6)
+        {
+            board[0][5] = BLACK_ROOK;
+            board[0][7] = EMPTY;
+        }
+        else if(move.toRow == 0 && move.toCol == 2)
+        {
+            board[0][3] = BLACK_ROOK;
+            board[0][0] = EMPTY;
+        }
+    }
+
+    if(move.movedPiece == WHITE_KING)
+    {
+        whiteKingSideCastle = false;
+        whiteQueenSideCastle = false;
+    }
+
+    if(move.movedPiece == BLACK_KING)
+    {
+        blackKingSideCastle = false;
+        blackQueenSideCastle = false;
+    }
+
+    if(move.fromRow==7 && move.fromCol==0)
+        whiteQueenSideCastle=false;
+
+    if(move.fromRow==7 && move.fromCol==7)
+        whiteKingSideCastle=false;
+
+    if(move.fromRow==0 && move.fromCol==0)
+        blackQueenSideCastle=false;
+
+    if(move.fromRow==0 && move.fromCol==7)
+        blackKingSideCastle=false;
+
     switchSide();
 }
 void Board::undoMove(const Move &move)
 {
-    board[move.fromRow][move.fromCol] =
-        move.movedPiece;
+    board[move.fromRow][move.fromCol]=move.movedPiece;
+    board[move.toRow][move.toCol]=move.capturedPiece;
 
-    board[move.toRow][move.toCol] =
-        move.capturedPiece;
-        switchSide();
+    if(move.isCastle)
+    {
+        if(move.toRow==7 && move.toCol==6)
+        {
+            board[7][7]=WHITE_ROOK;
+            board[7][5]=EMPTY;
+        }
+        else if(move.toRow==7 && move.toCol==2)
+        {
+            board[7][0]=WHITE_ROOK;
+            board[7][3]=EMPTY;
+        }
+        else if(move.toRow==0 && move.toCol==6)
+        {
+            board[0][7]=BLACK_ROOK;
+            board[0][5]=EMPTY;
+        }
+        else if(move.toRow==0 && move.toCol==2)
+        {
+            board[0][0]=BLACK_ROOK;
+            board[0][3]=EMPTY;
+        }
+    }
+
+    whiteKingSideCastle = move.prevWhiteKingSideCastle;
+    whiteQueenSideCastle = move.prevWhiteQueenSideCastle;
+    blackKingSideCastle = move.prevBlackKingSideCastle;
+    blackQueenSideCastle = move.prevBlackQueenSideCastle;
+
+    switchSide();
 }
 Piece Board::getPiece(int row, int col) const
 {
