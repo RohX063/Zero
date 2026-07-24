@@ -12,14 +12,34 @@ using namespace std;
 
 Board::Board()
 {
+
     initialize();
     whiteToMove = true;
+}
 
-    whiteKingSideCastle = true;
-    whiteQueenSideCastle = true;
+bool Board::equals(const Board& other) const
+{
+    if (whiteToMove != other.whiteToMove)
+        return false;
 
-    blackKingSideCastle = true;
-    blackQueenSideCastle = true;
+    if (whiteKingSideCastle != other.whiteKingSideCastle) return false;
+    if (whiteQueenSideCastle != other.whiteQueenSideCastle) return false;
+    if (blackKingSideCastle != other.blackKingSideCastle) return false;
+    if (blackQueenSideCastle != other.blackQueenSideCastle) return false;
+
+    if (enPassantRow != other.enPassantRow) return false;
+    if (enPassantCol != other.enPassantCol) return false;
+
+    for (int r = 0; r < 8; r++)
+    {
+        for (int c = 0; c < 8; c++)
+        {
+            if (board[r][c] != other.board[r][c])
+                return false;
+        }
+    }
+
+    return true;
 }
 
 void Board::clearBoard()
@@ -46,8 +66,17 @@ bool Board::loadFEN(const std::string& fen)
 
     std::string boardPart;
     std::string sidePart;
+    std::string castlePart;
+    std::string enPassantPart;
+    int halfmoveClock;
+    int fullmoveNumber;
 
-    ss >> boardPart >> sidePart;
+    ss >> boardPart
+       >> sidePart
+       >> castlePart
+       >> enPassantPart
+       >> halfmoveClock
+       >> fullmoveNumber;
 
     int row = 0;
     int col = 0;
@@ -100,6 +129,53 @@ bool Board::loadFEN(const std::string& fen)
     else
         return false;
 
+//--------------------------------------------------
+// Castling rights
+//--------------------------------------------------
+
+whiteKingSideCastle = false;
+whiteQueenSideCastle = false;
+blackKingSideCastle = false;
+blackQueenSideCastle = false;
+
+if (castlePart != "-")
+{
+    for (char c : castlePart)
+    {
+        switch (c)
+        {
+        case 'K':
+            whiteKingSideCastle = true;
+            break;
+
+        case 'Q':
+            whiteQueenSideCastle = true;
+            break;
+
+        case 'k':
+            blackKingSideCastle = true;
+            break;
+
+        case 'q':
+            blackQueenSideCastle = true;
+            break;
+        }
+    }
+}
+
+//--------------------------------------------------
+// En Passant
+//--------------------------------------------------
+
+enPassantRow = -1;
+enPassantCol = -1;
+
+if (enPassantPart != "-")
+{
+    enPassantCol = enPassantPart[0] - 'a';
+    enPassantRow = '8' - enPassantPart[1];
+}
+
     return true;
 }
 
@@ -145,6 +221,25 @@ void Board::initialize()
     board[7][5] = WHITE_BISHOP;
     board[7][6] = WHITE_KNIGHT;
     board[7][7] = WHITE_ROOK;
+
+//--------------------------------------------------
+// Initial castling rights
+//--------------------------------------------------
+
+whiteKingSideCastle = true;
+whiteQueenSideCastle = true;
+
+blackKingSideCastle = true;
+blackQueenSideCastle = true;
+
+//--------------------------------------------------
+// No en passant at game start
+//--------------------------------------------------
+
+enPassantRow = -1;
+enPassantCol = -1;
+
+whiteToMove = true;
 }
 
 //------------------------------------------------------------
@@ -202,101 +297,280 @@ void Board::printBoard() const
 }
 void Board::makeMove(Move &move)
 {
-    move.movedPiece = (Piece)board[move.fromRow][move.fromCol];
-    move.capturedPiece = (Piece)board[move.toRow][move.toCol];
 
-    move.prevWhiteKingSideCastle = whiteKingSideCastle;
-    move.prevWhiteQueenSideCastle = whiteQueenSideCastle;
-    move.prevBlackKingSideCastle = blackKingSideCastle;
-    move.prevBlackQueenSideCastle = blackQueenSideCastle;
+move.movedPiece = (Piece)board[move.fromRow][move.fromCol];
+move.capturedPiece = (Piece)board[move.toRow][move.toCol];
 
-    board[move.toRow][move.toCol] = board[move.fromRow][move.fromCol];
-    board[move.fromRow][move.fromCol] = EMPTY;
+// Save previous en passant square
+move.prevEnPassantRow = enPassantRow;
+move.prevEnPassantCol = enPassantCol;
 
-    // Castling rook move
-    if(move.isCastle)
+// Clear old en passant square
+enPassantRow = -1;
+enPassantCol = -1;
+
+
+
+// Save current castling rights
+move.prevWhiteKingSideCastle = whiteKingSideCastle;
+move.prevWhiteQueenSideCastle = whiteQueenSideCastle;
+move.prevBlackKingSideCastle = blackKingSideCastle;
+move.prevBlackQueenSideCastle = blackQueenSideCastle;
+
+board[move.toRow][move.toCol] = board[move.fromRow][move.fromCol];
+board[move.fromRow][move.fromCol] = EMPTY;
+
+//--------------------------------------------------
+// Promotion
+//--------------------------------------------------
+
+if (move.isPromotion)
+{
+    board[move.toRow][move.toCol] = move.promotionPiece;
+}
+
+//--------------------------------------------------
+// En Passant Capture
+//--------------------------------------------------
+
+if (move.isEnPassant)
+{
+    // White captures
+    if (move.movedPiece == WHITE_PAWN)
     {
-        if(move.toRow == 7 && move.toCol == 6)
+        move.capturedPiece = (Piece)board[move.toRow + 1][move.toCol];
+        board[move.toRow + 1][move.toCol] = EMPTY;
+    }
+
+    // Black captures
+    else if (move.movedPiece == BLACK_PAWN)
+    {
+        move.capturedPiece = (Piece)board[move.toRow - 1][move.toCol];
+        board[move.toRow - 1][move.toCol] = EMPTY;
+    }
+}
+
+//--------------------------------------------------
+// White double pawn push
+//--------------------------------------------------
+
+if (move.movedPiece == WHITE_PAWN &&
+    move.fromRow == 6 &&
+    move.toRow == 4)
+{
+    enPassantRow = 5;
+    enPassantCol = move.fromCol;
+}
+
+//--------------------------------------------------
+// Black double pawn push
+//--------------------------------------------------
+
+if (move.movedPiece == BLACK_PAWN &&
+    move.fromRow == 1 &&
+    move.toRow == 3)
+{
+    enPassantRow = 2;
+    enPassantCol = move.fromCol;
+}
+
+//--------------------------------------------------
+// Castling rook movement
+//--------------------------------------------------
+
+if (move.isCastle)
+{
+    if (move.isKingSideCastle)
+    {
+        // White O-O
+        if (move.toRow == 7)
         {
             board[7][5] = WHITE_ROOK;
             board[7][7] = EMPTY;
         }
-        else if(move.toRow == 7 && move.toCol == 2)
-        {
-            board[7][3] = WHITE_ROOK;
-            board[7][0] = EMPTY;
-        }
-        else if(move.toRow == 0 && move.toCol == 6)
+        // Black O-O
+        else
         {
             board[0][5] = BLACK_ROOK;
             board[0][7] = EMPTY;
         }
-        else if(move.toRow == 0 && move.toCol == 2)
+    }
+    else if (move.isQueenSideCastle)
+    {
+        // White O-O-O
+        if (move.toRow == 7)
+        {
+            board[7][3] = WHITE_ROOK;
+            board[7][0] = EMPTY;
+        }
+        // Black O-O-O
+        else
         {
             board[0][3] = BLACK_ROOK;
             board[0][0] = EMPTY;
         }
     }
-
-    if(move.movedPiece == WHITE_KING)
-    {
-        whiteKingSideCastle = false;
-        whiteQueenSideCastle = false;
-    }
-
-    if(move.movedPiece == BLACK_KING)
-    {
-        blackKingSideCastle = false;
-        blackQueenSideCastle = false;
-    }
-
-    if(move.fromRow==7 && move.fromCol==0)
-        whiteQueenSideCastle=false;
-
-    if(move.fromRow==7 && move.fromCol==7)
-        whiteKingSideCastle=false;
-
-    if(move.fromRow==0 && move.fromCol==0)
-        blackQueenSideCastle=false;
-
-    if(move.fromRow==0 && move.fromCol==7)
-        blackKingSideCastle=false;
-
-    switchSide();
 }
+
+//--------------------------------------------------
+// King moved
+//--------------------------------------------------
+
+if (move.movedPiece == WHITE_KING)
+{
+    whiteKingSideCastle = false;
+    whiteQueenSideCastle = false;
+}
+
+if (move.movedPiece == BLACK_KING)
+{
+    blackKingSideCastle = false;
+    blackQueenSideCastle = false;
+}
+
+//--------------------------------------------------
+// White rook moved
+//--------------------------------------------------
+
+if (move.fromRow == 7 && move.fromCol == 0)
+    whiteQueenSideCastle = false;
+
+if (move.fromRow == 7 && move.fromCol == 7)
+    whiteKingSideCastle = false;
+
+//--------------------------------------------------
+// Black rook moved
+//--------------------------------------------------
+
+if (move.fromRow == 0 && move.fromCol == 0)
+    blackQueenSideCastle = false;
+
+if (move.fromRow == 0 && move.fromCol == 7)
+    blackKingSideCastle = false;
+
+//--------------------------------------------------
+// Captured rook
+//--------------------------------------------------
+
+if (move.toRow == 7 && move.toCol == 0 && move.capturedPiece == WHITE_ROOK)
+    whiteQueenSideCastle = false;
+
+if (move.toRow == 7 && move.toCol == 7 && move.capturedPiece == WHITE_ROOK)
+    whiteKingSideCastle = false;
+
+if (move.toRow == 0 && move.toCol == 0 && move.capturedPiece == BLACK_ROOK)
+    blackQueenSideCastle = false;
+
+if (move.toRow == 0 && move.toCol == 7 && move.capturedPiece == BLACK_ROOK)
+    blackKingSideCastle = false;
+
+switchSide();
+}
+
+bool Board::canWhiteCastleKingSide() const
+{
+    return whiteKingSideCastle;
+}
+
+bool Board::canWhiteCastleQueenSide() const
+{
+    return whiteQueenSideCastle;
+}
+
+bool Board::canBlackCastleKingSide() const
+{
+    return blackKingSideCastle;
+}
+
+bool Board::canBlackCastleQueenSide() const
+{
+    return blackQueenSideCastle;
+}
+
+int Board::getEnPassantRow() const
+{
+    return enPassantRow;
+}
+
+int Board::getEnPassantCol() const
+{
+    return enPassantCol;
+}
+
 void Board::undoMove(const Move &move)
 {
+
     board[move.fromRow][move.fromCol]=move.movedPiece;
     board[move.toRow][move.toCol]=move.capturedPiece;
 
-    if(move.isCastle)
+//--------------------------------------------------
+// Undo En Passant Capture
+//--------------------------------------------------
+
+if (move.isEnPassant)
+{
+    // Destination square was originally empty
+    board[move.toRow][move.toCol] = EMPTY;
+
+    // White had captured a black pawn
+    if (move.movedPiece == WHITE_PAWN)
     {
-        if(move.toRow==7 && move.toCol==6)
+        board[move.toRow + 1][move.toCol] = BLACK_PAWN;
+    }
+
+    // Black had captured a white pawn
+    else if (move.movedPiece == BLACK_PAWN)
+    {
+        board[move.toRow - 1][move.toCol] = WHITE_PAWN;
+    }
+}
+
+//--------------------------------------------------
+// Undo castling rook movement
+//--------------------------------------------------
+
+if (move.isCastle)
+{
+    if (move.isKingSideCastle)
+    {
+        // White O-O
+        if (move.toRow == 7)
         {
-            board[7][7]=WHITE_ROOK;
-            board[7][5]=EMPTY;
+            board[7][7] = WHITE_ROOK;
+            board[7][5] = EMPTY;
         }
-        else if(move.toRow==7 && move.toCol==2)
+        // Black O-O
+        else
         {
-            board[7][0]=WHITE_ROOK;
-            board[7][3]=EMPTY;
-        }
-        else if(move.toRow==0 && move.toCol==6)
-        {
-            board[0][7]=BLACK_ROOK;
-            board[0][5]=EMPTY;
-        }
-        else if(move.toRow==0 && move.toCol==2)
-        {
-            board[0][0]=BLACK_ROOK;
-            board[0][3]=EMPTY;
+            board[0][7] = BLACK_ROOK;
+            board[0][5] = EMPTY;
         }
     }
+    else if (move.isQueenSideCastle)
+    {
+        // White O-O-O
+        if (move.toRow == 7)
+        {
+            board[7][0] = WHITE_ROOK;
+            board[7][3] = EMPTY;
+        }
+        // Black O-O-O
+        else
+        {
+            board[0][0] = BLACK_ROOK;
+            board[0][3] = EMPTY;
+        }
+    }
+}
 
     whiteKingSideCastle = move.prevWhiteKingSideCastle;
     whiteQueenSideCastle = move.prevWhiteQueenSideCastle;
+
     blackKingSideCastle = move.prevBlackKingSideCastle;
     blackQueenSideCastle = move.prevBlackQueenSideCastle;
+
+    enPassantRow = move.prevEnPassantRow;
+    enPassantCol = move.prevEnPassantCol;
 
     switchSide();
 }
