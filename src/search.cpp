@@ -2,6 +2,7 @@
 #include "evaluation.h"
 #include "movegen.h"
 #include <algorithm>
+#include <cassert>
 #include <iostream>
 #include "moveordering.h"
 #include "tt.h"
@@ -20,6 +21,8 @@ int negamax(
     int ply
 )
 {
+    Board original = board;
+    bool sideAtEntry = board.isWhiteToMove();
     int alphaOriginal = alpha;
 
     //--------------------------------------------------
@@ -199,64 +202,81 @@ board.undoMove(move);
         Move()
     );*/
 
+
     return bestScore;
 }
 
 Move findBestMove(Board& board, int depth)
 {
+
+    Board original = board;
+
     nodesSearched = 0;
 
     std::vector<Move> moves =
-        generateLegalMoves(
-            board,
-            board.isWhiteToMove()
-        );
+        generateLegalMoves(board, board.isWhiteToMove());
 
+    Move bestMove;
+    int bestScore = -1000000;
+
+    //--------------------------------------------------
     // Move Ordering
-    for(Move &move : moves)
+    //--------------------------------------------------
+
+    for (Move &move : moves)
     {
-        move.score =
-            scoreMove(
-                board,
-                move,
-                0
-            );
+        move.score = scoreMove(board, move, 0);
     }
+
 
     std::sort(
         moves.begin(),
         moves.end(),
-        [](const Move& a, const Move& b)
+        [](const Move &a, const Move &b)
         {
             return a.score > b.score;
         }
     );
 
-    Move bestMove;
+    //--------------------------------------------------
+    // Search
+    //--------------------------------------------------
 
-    int bestScore = -1000000;
+for (Move &move : moves)
+{
+    Board before = board;
 
-    for(Move &move : moves)
+    board.makeMove(move);
+
+    int score =
+        -negamax(
+            board,
+            depth - 1,
+            -1000000,
+            1000000,
+            0
+        );
+
+    board.undoMove(move);
+
+    if (!board.equals(before))
     {
-        board.makeMove(move);
+        std::cout << "\nROOT BOARD CORRUPTED after move ";
 
-        int score =
-            -negamax(
-                board,
-                depth - 1,
-                -1000000,
-                1000000,
-                0
-            );
+        std::cout
+            << char('a' + move.fromCol)
+            << char('8' - move.fromRow)
+            << char('a' + move.toCol)
+            << char('8' - move.toRow)
+            << std::endl;
+    }
 
-        board.undoMove(move);
-
-        if(score > bestScore)
-        {
-            bestScore = score;
-            bestMove = move;
-            bestMove.score = score;   // <-- Store evaluation with move
-        }
+    if (score > bestScore)
+    {
+        bestScore = score;
+        bestMove = move;
+        bestMove.score = score;
+    }
     }
 
     return bestMove;
@@ -267,6 +287,7 @@ Move iterativeDeepening(
     int maxDepth
 )
 {
+    
     std::cout << "Searching...\n";
     clearHistory();
 
@@ -274,45 +295,21 @@ Move iterativeDeepening(
 
     for(int depth=1; depth<=maxDepth; depth++)
     {
-        bestMove =
-            findBestMove(
-                board,
-                depth
-            );
+        Board beforeSearch = board;
 
-            /*std::cout
-<< "fromRow = " << bestMove.fromRow
-<< " fromCol = " << bestMove.fromCol
-<< " toRow = " << bestMove.toRow
-<< " toCol = " << bestMove.toCol
-<< '\n';*/
+        bestMove = findBestMove(board, depth);
 
-        /*std::cout
-        << "\n=====================\n";
-        std::cout
-            << "Best Move : "
-            << char('a' + bestMove.fromCol)
-            << (8 - bestMove.fromRow)
-            << char('a' + bestMove.toCol)
-            << (8 - bestMove.toRow)
-            << '\n';
-        std::cout
-        << "Depth     : " << depth << '\n';
-
-        std::cout
-            << "Eval : "
-            << bestMove.score / 100.0
-            << '\n';
-
-        std::cout
-            << "Nodes : "
-            << nodesSearched
-            << '\n';
-        std::cout
-        << "\n=====================\n";
-        */
-        
+std::cout
+    << "Depth "
+    << depth
+    << " -> "
+    << char('a' + bestMove.fromCol)
+    << char('8' - bestMove.fromRow)
+    << char('a' + bestMove.toCol)
+    << char('8' - bestMove.toRow)
+    << std::endl;
     }
+
 
     return bestMove;
 }
