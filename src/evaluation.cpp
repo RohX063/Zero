@@ -2,6 +2,7 @@
 #include "evaluation/material.h"
 #include "evaluation/pawns.h"
 #include "evaluation/mobility.h"
+#include "evaluation/king.h"
 #include "position.h"
 #include "pst.h"
 #include "piece.h"
@@ -12,6 +13,7 @@ int evaluatePosition(const Position& position)
     int score = Evaluation::evaluateMaterial(position);
     score += Evaluation::evaluatePawns(position);
     score += Evaluation::evaluateMobility(position);
+    score += Evaluation::evaluateKingSafety(position);
 
     Bitboard pieces = position.pieces();
     while (pieces) {
