@@ -1,5 +1,6 @@
 #include "evaluation.h"
 #include "evaluation/material.h"
+#include "evaluation/pawns.h"
 #include "position.h"
 #include "pst.h"
 #include "piece.h"
@@ -8,6 +9,7 @@ int evaluatePosition(const Position& position)
 {
     using namespace Zero;
     int score = Evaluation::evaluateMaterial(position);
+    score += Evaluation::evaluatePawns(position);
 
     Bitboard pieces = position.pieces();
     while (pieces) {
