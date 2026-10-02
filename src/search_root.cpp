@@ -30,7 +30,18 @@ SearchResult Worker::searchRootIteration(Depth depth)
         return result;
     }
 
-    MovePicker picker(position_, moves);
+    const Color us = position_.isWhiteToMove() ? WHITE : BLACK;
+
+    MovePicker picker(position_, moves,
+                      Move::none(),
+                      Move::none(),
+                      killerMoves_.first(0),
+                      killerMoves_.second(0),
+                      &history_,
+                      us,
+                      EMPTY,
+                      SQ_NONE);
+
     SearchResult result;
     Stack* ss = &stack_[0];
     *ss = Stack{};
@@ -41,16 +52,26 @@ SearchResult Worker::searchRootIteration(Depth depth)
             return result;
 
         const Move move = picker.next_move();
-        if (!move.isOk()) break;
+        if (!move.isOk())
+            break;
+
+        const Piece attacker = position_.piece_on(move.from_sq());
 
         StateInfo newState;
         ss->currentMove = move;
+        ss->movedPiece = attacker;
+
         position_.doMove(move, newState);
+
         Stack* child = ss + 1;
         *child = Stack{};
         child->ply = 1;
+        child->currentMove = move;
+        child->movedPiece = attacker;
+
         const Value score = -search(position_, child, depth - 1,
                                     -VALUE_INFINITE, VALUE_INFINITE);
+
         position_.undoMove(move);
 
         if (shouldStop())
@@ -138,7 +159,6 @@ int Worker::computeTimeBudgetMs(const Limits& limits) const
     int budget = limits.sideTimeMs / std::max(1, moves);
     budget += (3 * limits.incrementMs) / 4;
 
-    // Preserve a small reserve for the GUI/clock boundary.
     const int reserve = std::min(250, std::max(10, limits.sideTimeMs / 50));
     return std::max(1, budget - reserve);
 }
