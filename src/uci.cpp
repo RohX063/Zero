@@ -10,6 +10,7 @@
 #include "piece.h"
 #include "position.h"
 #include "thread.h"
+#include "search.h"
 
 namespace {
 
