@@ -3,6 +3,7 @@
 
 #include "position.h"
 #include "evaluation/material.h"
+#include "evaluation/pawns.h"
 
 int evaluatePosition(const Position& position);
 
