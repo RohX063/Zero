@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "countermove.h"
+#include "history.h"
 #include "killer.h"
 #include "move.h"
 #include "tt.h"
@@ -18,6 +19,7 @@ namespace Zero::Search {
 struct Stack {
     Move currentMove{};
     Move excludedMove{};
+    Piece movedPiece = EMPTY;
     Value staticEval = 0;
     int ply = 0;
     int moveCount = 0;
@@ -55,8 +57,12 @@ public:
 
     void setHashSize(std::size_t megabytes) { tt_.resize(megabytes); }
     void clearHash() { tt_.clear(); }
-    void clearHistory() { counterMoves_.clear(); }
+    void clearHistory() {
+        history_.clear();
+        counterMoves_.clear();
+    }
     void clearKillers() { killerMoves_.clear(); }
+
     Move killerMoveFor(Depth ply, std::size_t slot) const;
     Move counterMoveFor(Piece previousPiece, Square previousTo) const;
     std::uint32_t hashfull() const { return tt_.hashfull(); }
@@ -73,6 +79,7 @@ private:
     TranspositionTable tt_{};
     CounterMoveHistory counterMoves_{};
     KillerMoves killerMoves_{};
+    HistoryTables history_{};
     std::array<Stack, MAX_PLY + 2> stack_{};
     uint64_t nodes_ = 0;
     uint64_t clockNodes_ = 0;
