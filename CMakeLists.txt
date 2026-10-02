@@ -19,6 +19,7 @@ set(ZERO_SOURCES
     src/search_root.cpp
     src/thread.cpp
     src/evaluation.cpp
+    src/evaluation/material.cpp
     src/pst.cpp
 )
 
@@ -35,7 +36,8 @@ if(BUILD_TESTING)
 
     add_executable(search_smoke_test
         tests/search_smoke.cpp src/bitboard.cpp src/position.cpp src/movegen.cpp src/movepick.cpp
-        src/zobrist.cpp src/tt.cpp src/search.cpp src/qsearch.cpp src/search_root.cpp src/evaluation.cpp src/pst.cpp
+        src/zobrist.cpp src/tt.cpp src/search.cpp src/qsearch.cpp src/search_root.cpp src/evaluation.cpp
+        src/evaluation/material.cpp src/pst.cpp
     )
     target_include_directories(search_smoke_test PRIVATE src)
     target_compile_options(search_smoke_test PRIVATE -Wall -Wextra -Wpedantic)
