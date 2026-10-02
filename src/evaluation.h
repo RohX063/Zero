@@ -4,6 +4,7 @@
 #include "position.h"
 #include "evaluation/material.h"
 #include "evaluation/pawns.h"
+#include "evaluation/mobility.h"
 
 int evaluatePosition(const Position& position);
 
