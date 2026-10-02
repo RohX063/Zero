@@ -24,6 +24,16 @@ struct Stack {
     int ply = 0;
     int moveCount = 0;
     bool inCheck = false;
+    bool canNullMove = true;
+};
+
+struct SearchStats {
+    std::uint64_t pvsReSearches = 0;
+    std::uint64_t lmrReductions = 0;
+    std::uint64_t nullMoveSearches = 0;
+    std::uint64_t nullMoveCutoffs = 0;
+    std::uint64_t checkExtensions = 0;
+    std::uint64_t promotionExtensions = 0;
 };
 
 struct Limits {
@@ -67,6 +77,7 @@ public:
     Move counterMoveFor(Piece previousPiece, Square previousTo) const;
     std::uint32_t hashfull() const { return tt_.hashfull(); }
     std::size_t hashSizeMb() const { return tt_.megabytes(); }
+    const SearchStats& stats() const { return stats_; }
 
 private:
     Value search(Position& position, Stack* ss, Depth depth, Value alpha, Value beta);
@@ -81,6 +92,7 @@ private:
     KillerMoves killerMoves_{};
     HistoryTables history_{};
     std::array<Stack, MAX_PLY + 2> stack_{};
+    SearchStats stats_{};
     uint64_t nodes_ = 0;
     uint64_t clockNodes_ = 0;
 
