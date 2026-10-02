@@ -3,6 +3,8 @@
 
 #include <array>
 #include <cstddef>
+
+#include "history.h"
 #include "move.h"
 #include "movegen.h"
 
@@ -12,11 +14,22 @@ class MovePicker {
 public:
     MovePicker(const Position& position, const Move* moves, std::size_t count,
                Move ttMove = Move::none(), Move counterMove = Move::none(),
-               Move killer1 = Move::none(), Move killer2 = Move::none());
+               Move killer1 = Move::none(), Move killer2 = Move::none(),
+               const Zero::Search::HistoryTables* history = nullptr,
+               Zero::Color side = Zero::WHITE,
+               Piece previousPiece = EMPTY,
+               Zero::Square previousTo = Zero::SQ_NONE);
+
     MovePicker(const Position& position, const FixedMoveList& moves,
                Move ttMove = Move::none(), Move counterMove = Move::none(),
-               Move killer1 = Move::none(), Move killer2 = Move::none())
-        : MovePicker(position, moves.begin(), moves.size(), ttMove, counterMove, killer1, killer2) {}
+               Move killer1 = Move::none(), Move killer2 = Move::none(),
+               const Zero::Search::HistoryTables* history = nullptr,
+               Zero::Color side = Zero::WHITE,
+               Piece previousPiece = EMPTY,
+               Zero::Square previousTo = Zero::SQ_NONE)
+        : MovePicker(position, moves.begin(), moves.size(),
+                     ttMove, counterMove, killer1, killer2,
+                     history, side, previousPiece, previousTo) {}
 
     Move next_move();
 
