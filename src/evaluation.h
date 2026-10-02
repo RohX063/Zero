@@ -6,6 +6,7 @@
 #include "evaluation/pawns.h"
 #include "evaluation/mobility.h"
 #include "evaluation/king.h"
+#include "evaluation/threats.h"
 
 int evaluatePosition(const Position& position);
 
