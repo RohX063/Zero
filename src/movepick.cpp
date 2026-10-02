@@ -1,10 +1,10 @@
 #include "movepick.h"
 
 #include "position.h"
+#include "evaluation/material.h"
 
 #include <algorithm>
 #include <limits>
-#include "evaluation/material.h"
 
 namespace {
 
