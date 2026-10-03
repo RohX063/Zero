@@ -8,6 +8,7 @@
 #include "movepick.h"
 #include "qsearch.h"
 #include "position.h"
+#include "repetition.h"
 
 namespace Zero::Search {
 
@@ -29,6 +30,7 @@ Piece capturedPiece(const Position& position, const Move& move)
 {
     if (move.isEnPassant())
         return make_piece(position.isWhiteToMove() ? BLACK : WHITE, PAWN);
+
     return position.piece_on(move.to_sq());
 }
 
@@ -40,14 +42,23 @@ int historyBonus(Depth depth)
 
 int lmrReduction(Depth depth, int moveCount, int historyScore, bool inCheck)
 {
-    if (inCheck || depth < 3 || moveCount < 4)
+    constexpr int MIN_DEPTH = 3;
+    constexpr int MIN_MOVES = 4;
+
+    if (inCheck || depth < MIN_DEPTH || moveCount < MIN_MOVES)
         return 0;
 
     int reduction = 1;
-    if (depth >= 6) ++reduction;
-    if (moveCount >= 8) ++reduction;
-    if (historyScore < 0) ++reduction;
-    else if (historyScore > 2000 && reduction > 1) --reduction;
+
+    if (depth >= 6)
+        ++reduction;
+    if (moveCount >= 8)
+        ++reduction;
+
+    if (historyScore < 0)
+        ++reduction;
+    else if (historyScore > 2000 && reduction > 1)
+        --reduction;
 
     return std::min(reduction, depth - 2);
 }
@@ -55,7 +66,8 @@ int lmrReduction(Depth depth, int moveCount, int historyScore, bool inCheck)
 } // namespace
 
 Worker::Worker(Position& position)
-    : position_(position), tt_(TranspositionTable::DEFAULT_HASH_MB)
+    : position_(position),
+      tt_(TranspositionTable::DEFAULT_HASH_MB)
 {
 }
 
@@ -74,9 +86,16 @@ Move Worker::killerMoveFor(Depth ply, std::size_t slot) const
 Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Value beta)
 {
     visitNode();
-    if (shouldStop()) return VALUE_DRAW;
+    if (shouldStop())
+        return VALUE_DRAW;
+
+    // Game-state draws are resolved before evaluator/search work. A repeated
+    // position must not be "rescued" by another tactical branch in the tree.
+    if (Rules::isAutomaticDraw(position))
+        return VALUE_DRAW;
 
     ss->inCheck = position.isKingInCheck(position.isWhiteToMove());
+
     if (depth <= 0)
         return QSearch(*this).run(position, ss, alpha, beta);
 
@@ -88,9 +107,12 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
         : VALUE_DRAW;
 
     if (ttData.hit && ttData.depth >= depth) {
-        if (ttData.bound == BOUND_EXACT) return ttValue;
-        if (ttData.bound == BOUND_LOWER && ttValue >= beta) return ttValue;
-        if (ttData.bound == BOUND_UPPER && ttValue <= alpha) return ttValue;
+        if (ttData.bound == BOUND_EXACT)
+            return ttValue;
+        if (ttData.bound == BOUND_LOWER && ttValue >= beta)
+            return ttValue;
+        if (ttData.bound == BOUND_UPPER && ttValue <= alpha)
+            return ttValue;
     }
 
     if (!ss->inCheck && depth >= 3) {
@@ -99,15 +121,21 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
             : -evaluatePosition(position);
     }
 
-    // Conservative null-move pruning. It is deliberately disabled in check,
-    // in pawn-only positions, after a null move, and at shallow depths.
-    if (depth >= 3 && ss->canNullMove && !ss->inCheck && ss->staticEval >= beta) {
+    if (depth >= 3
+        && ss->canNullMove
+        && !ss->inCheck
+        && ss->staticEval >= beta)
+    {
         const Color us = position.isWhiteToMove() ? WHITE : BLACK;
         const Bitboard nonPawnMaterial =
-            position.pieces(us) & ~position.pieces(PAWN) & ~position.pieces(KING);
+            position.pieces(us)
+            & ~position.pieces(PAWN)
+            & ~position.pieces(KING);
 
         if (nonPawnMaterial != 0) {
-            const Depth nullDepth = depth - 1 - (2 + depth / 4);
+            const Depth reduction = 2 + depth / 4;
+            const Depth nullDepth = depth - 1 - reduction;
+
             if (nullDepth >= 0) {
                 StateInfo nullState;
                 position.doNullMove(nullState);
@@ -122,13 +150,17 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
                     -search(position, child, nullDepth, -beta, -beta + 1);
 
                 position.undoNullMove();
-                if (shouldStop()) return VALUE_DRAW;
+
+                if (shouldStop())
+                    return VALUE_DRAW;
 
                 if (nullScore >= beta) {
                     ++stats_.nullMoveCutoffs;
                     tt_.store(key,
                               TranspositionTable::value_to_tt(nullScore, ss->ply),
-                              BOUND_LOWER, depth, Move::none());
+                              BOUND_LOWER,
+                              depth,
+                              Move::none());
                     return nullScore;
                 }
             }
@@ -138,10 +170,15 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
     FixedMoveList moves;
     generateLegalMoves(position, position.isWhiteToMove(), moves);
     if (moves.empty()) {
-        const Value terminal = ss->inCheck ? -VALUE_MATE + ss->ply : VALUE_DRAW;
+        const Value terminal = ss->inCheck
+            ? -VALUE_MATE + ss->ply
+            : VALUE_DRAW;
+
         tt_.store(key,
                   TranspositionTable::value_to_tt(terminal, ss->ply),
-                  BOUND_EXACT, depth, Move::none());
+                  BOUND_EXACT,
+                  depth,
+                  Move::none());
         return terminal;
     }
 
@@ -160,20 +197,26 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
                       counterMove,
                       killerMoves_.first(ss->ply),
                       killerMoves_.second(ss->ply),
-                      &history_, us, previousPiece, previousTo);
+                      &history_,
+                      us,
+                      previousPiece,
+                      previousTo);
 
     std::array<TriedMove, MAX_MOVES> tried{};
     std::size_t triedCount = 0;
+
     Value bestScore = -VALUE_INFINITE;
     Move bestMove = Move::none();
     int moveCount = 0;
     bool firstMove = true;
 
     for (;;) {
-        if (shouldStop()) return VALUE_DRAW;
+        if (shouldStop())
+            return VALUE_DRAW;
 
         const Move move = picker.next_move();
-        if (!move.isOk()) break;
+        if (!move.isOk())
+            break;
 
         ++moveCount;
         ss->moveCount = moveCount;
@@ -182,12 +225,15 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
         const Piece attacker = position.piece_on(move.from_sq());
         const Piece victim = capturedPiece(position, move);
         const bool quiet = isQuietMove(move, victim);
+
         if (triedCount < tried.size())
             tried[triedCount++] = {move, attacker, victim, quiet};
 
-        const int quietHistory = quiet
-            ? history_.quietScore(us, attacker, move.from_sq(), move.to_sq(), previousPiece, previousTo)
-            : 0;
+        int quietHistory = 0;
+        if (quiet) {
+            quietHistory = history_.quietScore(
+                us, attacker, move.from_sq(), move.to_sq(), previousPiece, previousTo);
+        }
 
         StateInfo newState;
         position.doMove(move, newState);
@@ -213,33 +259,51 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
         }
 
         const Depth fullDepth = std::max(0, depth - 1 + extension);
+
         int reduction = 0;
-        if (!firstMove && quiet)
+        if (!firstMove && quiet && !move.isPromotion()) {
             reduction = lmrReduction(depth, moveCount, quietHistory, ss->inCheck);
-        if (reduction > 0)
-            ++stats_.lmrReductions;
+            if (reduction > 0)
+                ++stats_.lmrReductions;
+        }
 
         Value score;
+
         if (firstMove) {
-            score = -search(position, child, fullDepth, -beta, -alpha);
+            score = -search(position,
+                            child,
+                            fullDepth,
+                            -beta,
+                            -alpha);
             firstMove = false;
         } else {
             const Depth probeDepth = std::max(0, fullDepth - reduction);
-            score = -search(position, child, probeDepth, -alpha - 1, -alpha);
+            score = -search(position,
+                            child,
+                            probeDepth,
+                            -alpha - 1,
+                            -alpha);
 
             if (score > alpha) {
                 ++stats_.pvsReSearches;
-                score = -search(position, child, fullDepth, -beta, -alpha);
+                score = -search(position,
+                                child,
+                                fullDepth,
+                                -beta,
+                                -alpha);
             }
         }
 
         position.undoMove(move);
-        if (shouldStop()) return VALUE_DRAW;
+
+        if (shouldStop())
+            return VALUE_DRAW;
 
         if (score > bestScore) {
             bestScore = score;
             bestMove = move;
         }
+
         if (score > alpha)
             alpha = score;
 
@@ -252,28 +316,45 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
 
     const bool cutoff = alpha >= beta;
     const int baseBonus = historyBonus(depth);
-    const int winnerBonus = cutoff ? std::min(512, baseBonus * 2) : baseBonus;
+    const int winnerBonus = cutoff
+        ? std::min(512, baseBonus * 2)
+        : baseBonus;
     const int loserPenalty = std::max(8, baseBonus / 2);
 
     for (std::size_t i = 0; i < triedCount; ++i) {
         const TriedMove& tm = tried[i];
-        const int bonus = tm.move == bestMove ? winnerBonus : -loserPenalty;
+        const int bonus = (tm.move == bestMove)
+            ? winnerBonus
+            : -loserPenalty;
+
         if (tm.quiet) {
-            history_.updateQuiet(us, tm.attacker,
-                                 tm.move.from_sq(), tm.move.to_sq(),
-                                 previousPiece, previousTo, bonus);
+            history_.updateQuiet(us,
+                                 tm.attacker,
+                                 tm.move.from_sq(),
+                                 tm.move.to_sq(),
+                                 previousPiece,
+                                 previousTo,
+                                 bonus);
         } else if (tm.victim != EMPTY) {
-            history_.updateCapture(tm.attacker, tm.victim, tm.move.to_sq(), bonus);
+            history_.updateCapture(tm.attacker,
+                                   tm.victim,
+                                   tm.move.to_sq(),
+                                   bonus);
         }
     }
 
     Bound bound = BOUND_EXACT;
-    if (bestScore <= alphaOriginal) bound = BOUND_UPPER;
-    else if (bestScore >= beta) bound = BOUND_LOWER;
+    if (bestScore <= alphaOriginal)
+        bound = BOUND_UPPER;
+    else if (bestScore >= beta)
+        bound = BOUND_LOWER;
 
     tt_.store(key,
               TranspositionTable::value_to_tt(bestScore, ss->ply),
-              bound, depth, bestMove, beta - alphaOriginal > 1);
+              bound,
+              depth,
+              bestMove,
+              beta - alphaOriginal > 1);
 
     if (previousMove.isOk() && bestMove.isOk())
         counterMoves_.update(previousPiece, previousTo, bestMove);
