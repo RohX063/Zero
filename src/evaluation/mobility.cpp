@@ -3,13 +3,12 @@
 #include "../position.h"
 #include "../piece.h"
 
+#include <algorithm>
+
 namespace Zero::Evaluation {
 
 namespace {
 
-// The tables are centered around normal useful mobility rather than making
-// every additional square worth the same amount. This keeps a queen with a
-// huge attack map from dominating the entire evaluator.
 constexpr int KNIGHT_MOBILITY[9] = {
     -30, -22, -14, -7, 0, 7, 14, 22, 30
 };
@@ -24,8 +23,6 @@ constexpr int ROOK_MOBILITY[15] = {
       4,   7,  10,  13, 16, 19, 22
 };
 
-// Queen mobility is deliberately compressed: queen activity is important,
-// but raw move count must not overwhelm material, pawn structure or king safety.
 constexpr int QUEEN_MOBILITY[28] = {
     -18, -16, -14, -12, -10, -8, -6, -4,
      -2,   0,   2,   4,   6,  8, 10, 12,
@@ -59,8 +56,6 @@ Bitboard pawnAttackMap(const Position& position, Color by)
     return attacks;
 }
 
-
-
 } // namespace
 
 MobilityFeatures analyzeMobility(const Position& position, Color color)
@@ -78,34 +73,36 @@ MobilityFeatures analyzeMobility(const Position& position, Color color)
     while (knights) {
         const Square sq = pop_lsb(knights);
         const Bitboard attacks = Bitboards::KnightAttacks[sq];
-        result.knight += popcount(attacks & ~ownPieces & ~enemyKing);
-
-        Bitboard safe = attacks & ~ownPieces & ~enemyKing & ~enemyPawnAttacks;
-        result.safeKnight += popcount(safe);
+        const Bitboard destinations = attacks & ~ownPieces & ~enemyKing;
+        result.knight += popcount(destinations);
+        result.safeKnight += popcount(destinations & ~enemyPawnAttacks);
     }
 
     Bitboard bishops = position.pieces(color, BISHOP);
     while (bishops) {
         const Square sq = pop_lsb(bishops);
         const Bitboard attacks = Bitboards::bishop_attacks(sq, occupied);
-        result.bishop += popcount(attacks & ~ownPieces & ~enemyKing);
-        result.safeBishop += popcount(attacks & ~ownPieces & ~enemyKing & ~enemyPawnAttacks);
+        const Bitboard destinations = attacks & ~ownPieces & ~enemyKing;
+        result.bishop += popcount(destinations);
+        result.safeBishop += popcount(destinations & ~enemyPawnAttacks);
     }
 
     Bitboard rooks = position.pieces(color, ROOK);
     while (rooks) {
         const Square sq = pop_lsb(rooks);
         const Bitboard attacks = Bitboards::rook_attacks(sq, occupied);
-        result.rook += popcount(attacks & ~ownPieces & ~enemyKing);
-        result.safeRook += popcount(attacks & ~ownPieces & ~enemyKing & ~enemyPawnAttacks);
+        const Bitboard destinations = attacks & ~ownPieces & ~enemyKing;
+        result.rook += popcount(destinations);
+        result.safeRook += popcount(destinations & ~enemyPawnAttacks);
     }
 
     Bitboard queens = position.pieces(color, QUEEN);
     while (queens) {
         const Square sq = pop_lsb(queens);
         const Bitboard attacks = Bitboards::queen_attacks(sq, occupied);
-        result.queen += popcount(attacks & ~ownPieces & ~enemyKing);
-        result.safeQueen += popcount(attacks & ~ownPieces & ~enemyKing & ~enemyPawnAttacks);
+        const Bitboard destinations = attacks & ~ownPieces & ~enemyKing;
+        result.queen += popcount(destinations);
+        result.safeQueen += popcount(destinations & ~enemyPawnAttacks);
     }
 
     return result;
@@ -125,8 +122,14 @@ int evaluateSideMobility(const Position& position, Color color)
         const Bitboard destinations = attacks & ~ownPieces & ~enemyKing;
         const int mobility = popcount(destinations);
         const int safe = popcount(destinations & ~enemyPawnAttacks);
+
         score += mobilityBonus(type, mobility);
-        score += SAFE_MOBILITY_SCALE * (safe - mobility / 2);
+
+        // Reward positive safe-space access, but do not turn an unsafe attack
+        // map into an outsized negative penalty. The evaluator remains stable
+        // when a piece has many legal but tactically sensitive squares.
+        const int safeSurplus = std::max(0, safe - mobility / 2);
+        score += SAFE_MOBILITY_SCALE * std::min(6, safeSurplus);
     };
 
     Bitboard pieces = position.pieces(color, KNIGHT);
