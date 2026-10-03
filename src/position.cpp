@@ -159,14 +159,21 @@ bool Position::loadFEN(const std::string& fen) {
     if (epPart != "-") {
         if (epPart.size() != 2 || epPart[0] < 'a' || epPart[0] > 'h' || epPart[1] < '1' || epPart[1] > '8')
             return false;
+
         state_->epSquare = make_square(epPart[0] - 'a', epPart[1] - '1');
 
         // Only retain an en-passant right when the side to move actually has
         // a pawn that can capture onto the EP square. This prevents irrelevant
         // FEN EP fields from creating false repetition-key differences.
+        //
+        // PawnAttacks[color][sq] = squares attacked BY a pawn of 'color'
+        // sitting on 'sq'. Therefore, to find pawns of 'capturer' attacking
+        // the EP target square, the lookup color must be reversed.
         const Color capturer = state_->whiteToMove ? WHITE : BLACK;
         const Bitboard capturers =
-            pieces(capturer, PAWN) & Bitboards::PawnAttacks[capturer][state_->epSquare];
+            pieces(capturer, PAWN) &
+            Bitboards::PawnAttacks[~capturer][state_->epSquare];
+
         if (capturers == 0)
             state_->epSquare = SQ_NONE;
     }
@@ -178,6 +185,7 @@ bool Position::loadFEN(const std::string& fen) {
         state_->key ^= Zobrist::side;
     state_->key ^= Zobrist::castling_key(castlingRightsMask());
     state_->key ^= Zobrist::en_passant_key(state_->epSquare);
+
     return true;
 }
 
@@ -190,10 +198,12 @@ void Position::initialize() {
         WHITE_ROOK, WHITE_KNIGHT, WHITE_BISHOP, WHITE_QUEEN,
         WHITE_KING, WHITE_BISHOP, WHITE_KNIGHT, WHITE_ROOK
     };
+
     constexpr Piece blackBackRank[] = {
         BLACK_ROOK, BLACK_KNIGHT, BLACK_BISHOP, BLACK_QUEEN,
         BLACK_KING, BLACK_BISHOP, BLACK_KNIGHT, BLACK_ROOK
     };
+
     for (int f = 0; f < 8; ++f) {
         setPiece(make_square(f, 0), backRank[f]);
         setPiece(make_square(f, 1), WHITE_PAWN);
@@ -212,24 +222,36 @@ void Position::initialize() {
 
 void Position::printBoard() const {
     std::cout << "\n   +-----------------+\n";
+
     for (int row = 0; row < 8; ++row) {
         std::cout << 8 - row << "  |";
+
         for (int col = 0; col < 8; ++col) {
             const Piece p = getPiece(row, col);
             char c = '.';
+
             switch (p) {
-                case WHITE_PAWN: c='P'; break; case WHITE_KNIGHT: c='N'; break;
-                case WHITE_BISHOP: c='B'; break; case WHITE_ROOK: c='R'; break;
-                case WHITE_QUEEN: c='Q'; break; case WHITE_KING: c='K'; break;
-                case BLACK_PAWN: c='p'; break; case BLACK_KNIGHT: c='n'; break;
-                case BLACK_BISHOP: c='b'; break; case BLACK_ROOK: c='r'; break;
-                case BLACK_QUEEN: c='q'; break; case BLACK_KING: c='k'; break;
+                case WHITE_PAWN: c='P'; break;
+                case WHITE_KNIGHT: c='N'; break;
+                case WHITE_BISHOP: c='B'; break;
+                case WHITE_ROOK: c='R'; break;
+                case WHITE_QUEEN: c='Q'; break;
+                case WHITE_KING: c='K'; break;
+                case BLACK_PAWN: c='p'; break;
+                case BLACK_KNIGHT: c='n'; break;
+                case BLACK_BISHOP: c='b'; break;
+                case BLACK_ROOK: c='r'; break;
+                case BLACK_QUEEN: c='q'; break;
+                case BLACK_KING: c='k'; break;
                 default: break;
             }
+
             std::cout << ' ' << c;
         }
+
         std::cout << " |\n";
     }
+
     std::cout << "   +-----------------+\n      a b c d e f g h\n";
 }
 
@@ -240,11 +262,32 @@ Square Position::king_square(Color c) const {
 
 Bitboard Position::attackers_to(Square sq, Color by) const {
     const Bitboard occupied = occupancy_;
-    Bitboard attackers = Bitboards::PawnAttacks[~by][sq] & byColor_[by] & byType_[PAWN];
-    attackers |= Bitboards::KnightAttacks[sq] & byColor_[by] & byType_[KNIGHT];
-    attackers |= Bitboards::KingAttacks[sq] & byColor_[by] & byType_[KING];
-    attackers |= Bitboards::bishop_attacks(sq, occupied) & byColor_[by] & (byType_[BISHOP] | byType_[QUEEN]);
-    attackers |= Bitboards::rook_attacks(sq, occupied) & byColor_[by] & (byType_[ROOK] | byType_[QUEEN]);
+
+    Bitboard attackers =
+        Bitboards::PawnAttacks[~by][sq] &
+        byColor_[by] &
+        byType_[PAWN];
+
+    attackers |=
+        Bitboards::KnightAttacks[sq] &
+        byColor_[by] &
+        byType_[KNIGHT];
+
+    attackers |=
+        Bitboards::KingAttacks[sq] &
+        byColor_[by] &
+        byType_[KING];
+
+    attackers |=
+        Bitboards::bishop_attacks(sq, occupied) &
+        byColor_[by] &
+        (byType_[BISHOP] | byType_[QUEEN]);
+
+    attackers |=
+        Bitboards::rook_attacks(sq, occupied) &
+        byColor_[by] &
+        (byType_[ROOK] | byType_[QUEEN]);
+
     return attackers;
 }
 
@@ -253,12 +296,16 @@ bool Position::isSquareAttacked(Square sq, Color by) const {
 }
 
 bool Position::isSquareAttacked(int row, int col, bool byWhite) const {
-    return isSquareAttacked(make_square(col, 7 - row), byWhite ? WHITE : BLACK);
+    return isSquareAttacked(
+        make_square(col, 7 - row),
+        byWhite ? WHITE : BLACK
+    );
 }
 
 bool Position::isKingInCheck(bool whiteKing) const {
     const Color c = whiteKing ? WHITE : BLACK;
     const Square king = king_square(c);
+
     return king != SQ_NONE && isSquareAttacked(king, ~c);
 }
 
@@ -271,6 +318,7 @@ void Position::doMove(const Move& move, StateInfo& newState) {
     state_ = &newState;
 
     const int oldCastlingRights = castlingRightsMask();
+
     state_->key ^= Zobrist::en_passant_key(state_->epSquare);
     state_->epSquare = SQ_NONE;
 
@@ -280,25 +328,56 @@ void Position::doMove(const Move& move, StateInfo& newState) {
     removePiece(move.from, moving);
 
     if (move.isEnPassant()) {
-        const Square capSq = moving == WHITE_PAWN ? Square(move.to - 8) : Square(move.to + 8);
+        const Square capSq =
+            moving == WHITE_PAWN
+                ? Square(move.to - 8)
+                : Square(move.to + 8);
+
         captured = board_[capSq];
-        if (captured != EMPTY) removePiece(capSq, captured);
+
+        if (captured != EMPTY)
+            removePiece(capSq, captured);
+
     } else if (captured != EMPTY) {
         removePiece(move.to, captured);
     }
 
-    const Piece placed = move.isPromotion() ? move.promotionPiece : moving;
+    const Piece placed =
+        move.isPromotion()
+            ? move.promotionPiece
+            : moving;
+
     putPiece(move.to, placed);
     state_->capturedPiece = captured;
 
-    if (moving == WHITE_PAWN && rank_of(move.from) == 1 && rank_of(move.to) == 3) {
+    // White pawn moved e2-e4/etc. The EP square is only relevant if a
+    // BLACK pawn attacks that square. Since PawnAttacks[color][sq] describes
+    // squares attacked BY a pawn of 'color' FROM 'sq', reverse the lookup.
+    if (moving == WHITE_PAWN &&
+        rank_of(move.from) == 1 &&
+        rank_of(move.to) == 3) {
+
         const Square ep = make_square(file_of(move.from), 2);
-        const Bitboard capturers = pieces(BLACK, PAWN) & Bitboards::PawnAttacks[BLACK][ep];
+
+        const Bitboard capturers =
+            pieces(BLACK, PAWN) &
+            Bitboards::PawnAttacks[WHITE][ep];
+
         if (capturers)
             state_->epSquare = ep;
-    } else if (moving == BLACK_PAWN && rank_of(move.from) == 6 && rank_of(move.to) == 4) {
+
+    // Black pawn moved e7-e5/etc. The EP square is only relevant if a
+    // WHITE pawn attacks that square.
+    } else if (moving == BLACK_PAWN &&
+               rank_of(move.from) == 6 &&
+               rank_of(move.to) == 4) {
+
         const Square ep = make_square(file_of(move.from), 5);
-        const Bitboard capturers = pieces(WHITE, PAWN) & Bitboards::PawnAttacks[WHITE][ep];
+
+        const Bitboard capturers =
+            pieces(WHITE, PAWN) &
+            Bitboards::PawnAttacks[BLACK][ep];
+
         if (capturers)
             state_->epSquare = ep;
     }
@@ -307,17 +386,28 @@ void Position::doMove(const Move& move, StateInfo& newState) {
         const Color us = color_of(moving);
         const int rank = us == WHITE ? 0 : 7;
         const bool kingSide = move.isKingSideCastle();
-        const Square rookFrom = make_square(kingSide ? 7 : 0, rank);
-        const Square rookTo = make_square(kingSide ? 5 : 3, rank);
-        const Piece rook = us == WHITE ? WHITE_ROOK : BLACK_ROOK;
+
+        const Square rookFrom =
+            make_square(kingSide ? 7 : 0, rank);
+
+        const Square rookTo =
+            make_square(kingSide ? 5 : 3, rank);
+
+        const Piece rook =
+            us == WHITE ? WHITE_ROOK : BLACK_ROOK;
+
         movePiece(rookFrom, rookTo, rook);
     }
 
     if (moving == WHITE_KING) {
-        state_->whiteKingSideCastle = state_->whiteQueenSideCastle = false;
+        state_->whiteKingSideCastle =
+            state_->whiteQueenSideCastle = false;
+
     } else if (moving == BLACK_KING) {
-        state_->blackKingSideCastle = state_->blackQueenSideCastle = false;
+        state_->blackKingSideCastle =
+            state_->blackQueenSideCastle = false;
     }
+
     setCastlingRightsForRookSquare(move.from);
     clearCastlingRightsForCapturedRook(move.to, captured);
 
@@ -334,17 +424,29 @@ void Position::doMove(const Move& move, StateInfo& newState) {
 }
 
 void Position::undoMove(const Move& move) {
-    if (state_ == &rootState_ || state_->previous == nullptr) return;
+    if (state_ == &rootState_ || state_->previous == nullptr)
+        return;
+
     const StateInfo* current = state_;
     const Piece moving = current->movedPiece;
-    const Piece placed = move.isPromotion() ? move.promotionPiece : moving;
+
+    const Piece placed =
+        move.isPromotion()
+            ? move.promotionPiece
+            : moving;
 
     removePiece(move.to, placed);
     putPiece(move.from, moving);
 
     if (move.isEnPassant()) {
-        const Square capSq = moving == WHITE_PAWN ? Square(move.to - 8) : Square(move.to + 8);
-        if (current->capturedPiece != EMPTY) putPiece(capSq, current->capturedPiece);
+        const Square capSq =
+            moving == WHITE_PAWN
+                ? Square(move.to - 8)
+                : Square(move.to + 8);
+
+        if (current->capturedPiece != EMPTY)
+            putPiece(capSq, current->capturedPiece);
+
     } else if (current->capturedPiece != EMPTY) {
         putPiece(move.to, current->capturedPiece);
     }
@@ -353,9 +455,16 @@ void Position::undoMove(const Move& move) {
         const Color us = color_of(moving);
         const int rank = us == WHITE ? 0 : 7;
         const bool kingSide = move.isKingSideCastle();
-        const Square rookFrom = make_square(kingSide ? 7 : 0, rank);
-        const Square rookTo = make_square(kingSide ? 5 : 3, rank);
-        const Piece rook = us == WHITE ? WHITE_ROOK : BLACK_ROOK;
+
+        const Square rookFrom =
+            make_square(kingSide ? 7 : 0, rank);
+
+        const Square rookTo =
+            make_square(kingSide ? 5 : 3, rank);
+
+        const Piece rook =
+            us == WHITE ? WHITE_ROOK : BLACK_ROOK;
+
         movePiece(rookTo, rookFrom, rook);
     }
 
@@ -368,55 +477,103 @@ void Position::doNullMove(StateInfo& newState) {
     newState.capturedPiece = EMPTY;
     newState.movedPiece = EMPTY;
     newState.isNullMove = true;
+
     state_ = &newState;
+
     state_->key ^= Zobrist::en_passant_key(state_->epSquare);
     state_->epSquare = SQ_NONE;
+
     state_->key ^= Zobrist::side;
     state_->whiteToMove = !state_->whiteToMove;
 }
 
 void Position::undoNullMove() {
-    if (state_ == &rootState_ || state_->previous == nullptr) return;
+    if (state_ == &rootState_ || state_->previous == nullptr)
+        return;
+
     state_ = state_->previous;
 }
 
 void Position::setCastlingRightsForRookSquare(Square sq) {
-    if (sq == make_square(0,0)) state_->whiteQueenSideCastle = false;
-    if (sq == make_square(7,0)) state_->whiteKingSideCastle = false;
-    if (sq == make_square(0,7)) state_->blackQueenSideCastle = false;
-    if (sq == make_square(7,7)) state_->blackKingSideCastle = false;
+    if (sq == make_square(0,0))
+        state_->whiteQueenSideCastle = false;
+
+    if (sq == make_square(7,0))
+        state_->whiteKingSideCastle = false;
+
+    if (sq == make_square(0,7))
+        state_->blackQueenSideCastle = false;
+
+    if (sq == make_square(7,7))
+        state_->blackKingSideCastle = false;
 }
 
-void Position::clearCastlingRightsForCapturedRook(Square sq, Piece captured) {
+void Position::clearCastlingRightsForCapturedRook(
+    Square sq,
+    Piece captured)
+{
     if (captured == WHITE_ROOK) {
-        if (sq == make_square(0,0)) state_->whiteQueenSideCastle = false;
-        if (sq == make_square(7,0)) state_->whiteKingSideCastle = false;
+        if (sq == make_square(0,0))
+            state_->whiteQueenSideCastle = false;
+
+        if (sq == make_square(7,0))
+            state_->whiteKingSideCastle = false;
+
     } else if (captured == BLACK_ROOK) {
-        if (sq == make_square(0,7)) state_->blackQueenSideCastle = false;
-        if (sq == make_square(7,7)) state_->blackKingSideCastle = false;
+        if (sq == make_square(0,7))
+            state_->blackQueenSideCastle = false;
+
+        if (sq == make_square(7,7))
+            state_->blackKingSideCastle = false;
     }
 }
 
-bool Position::canWhiteCastleKingSide() const { return state_->whiteKingSideCastle; }
-bool Position::canWhiteCastleQueenSide() const { return state_->whiteQueenSideCastle; }
-bool Position::canBlackCastleKingSide() const { return state_->blackKingSideCastle; }
-bool Position::canBlackCastleQueenSide() const { return state_->blackQueenSideCastle; }
+bool Position::canWhiteCastleKingSide() const {
+    return state_->whiteKingSideCastle;
+}
+
+bool Position::canWhiteCastleQueenSide() const {
+    return state_->whiteQueenSideCastle;
+}
+
+bool Position::canBlackCastleKingSide() const {
+    return state_->blackKingSideCastle;
+}
+
+bool Position::canBlackCastleQueenSide() const {
+    return state_->blackQueenSideCastle;
+}
 
 int Position::getEnPassantRow() const {
-    return state_->epSquare == SQ_NONE ? -1 : 7 - rank_of(state_->epSquare);
+    return state_->epSquare == SQ_NONE
+        ? -1
+        : 7 - rank_of(state_->epSquare);
 }
-int Position::getEnPassantCol() const { return state_->epSquare == SQ_NONE ? -1 : file_of(state_->epSquare); }
+
+int Position::getEnPassantCol() const {
+    return state_->epSquare == SQ_NONE
+        ? -1
+        : file_of(state_->epSquare);
+}
 
 Piece Position::getPiece(int row, int col) const {
-    return row >= 0 && row < 8 && col >= 0 && col < 8 ? board_[make_square(col, 7 - row)] : EMPTY;
+    return row >= 0 && row < 8 &&
+           col >= 0 && col < 8
+        ? board_[make_square(col, 7 - row)]
+        : EMPTY;
 }
 
-bool Position::isWhiteToMove() const { return state_->whiteToMove; }
+bool Position::isWhiteToMove() const {
+    return state_->whiteToMove;
+}
+
 void Position::setSideToMove(bool white) {
     if (state_->whiteToMove != white)
         state_->key ^= Zobrist::side;
+
     state_->whiteToMove = white;
 }
+
 void Position::switchSide() {
     state_->key ^= Zobrist::side;
     state_->whiteToMove = !state_->whiteToMove;
@@ -431,14 +588,19 @@ int Position::castlingRightsMask() const {
 
 Zero::Key Position::recomputeKey() const {
     Zero::Key result = 0;
+
     for (Square sq = 0; sq < SQUARE_NB; ++sq) {
         const Piece piece = board_[sq];
+
         if (piece != EMPTY)
             result ^= Zobrist::piece(piece, sq);
     }
+
     if (!state_->whiteToMove)
         result ^= Zobrist::side;
+
     result ^= Zobrist::castling_key(castlingRightsMask());
     result ^= Zobrist::en_passant_key(state_->epSquare);
+
     return result;
 }
