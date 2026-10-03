@@ -8,8 +8,6 @@ namespace Zero::Evaluation {
 
 namespace {
 
-// These are intentionally small structural terms. Material, king safety,
-// mobility and tactical pressure belong to their own evaluation modules.
 constexpr int DOUBLED_PAWN_PENALTY = 12;
 constexpr int ISOLATED_PAWN_PENALTY = 10;
 constexpr int BACKWARD_PAWN_PENALTY = 8;
@@ -80,12 +78,6 @@ bool isBackwardPawn(Square sq, Bitboard friendlyPawns, Bitboard enemyPawns, Colo
 {
     const int file = file_of(sq);
     const int rank = rank_of(sq);
-
-    // A conservative backward-pawn definition:
-    // 1) there is no friendly pawn on a neighboring file on the same or
-    //    supporting side of the pawn;
-    // 2) the pawn's immediate advance square is controlled by an enemy pawn;
-    // 3) it is not already a passed pawn.
     const Bitboard neighbors = adjacentFiles(file);
     const Bitboard supportingRanks = ranksBehind(rank, color);
 
@@ -96,12 +88,12 @@ bool isBackwardPawn(Square sq, Bitboard friendlyPawns, Bitboard enemyPawns, Colo
     if (advanceRank < 0 || advanceRank > 7)
         return false;
 
-    const Bitboard enemyAdjacent = enemyPawns & adjacentFiles(file) & Bitboards::RankBB[advanceRank];
+    const Bitboard enemyAdjacent =
+        enemyPawns & adjacentFiles(file) & Bitboards::RankBB[advanceRank];
 
-    // The enemy pawn(s) on adjacent files one rank ahead attack the advance square.
-    // A same-file pawn merely blocks the square and is handled by other positional logic.
     if (enemyAdjacent == 0)
         return false;
+
     return !isPassedPawn(sq, enemyPawns, color);
 }
 
@@ -123,19 +115,7 @@ int evaluateFeatures(const PawnFeatures& f)
 int evaluateSide(Bitboard friendlyPawns, Bitboard enemyPawns, Color color)
 {
     const PawnFeatures f = analyzePawnStructure(friendlyPawns, enemyPawns, color);
-    int score = evaluateFeatures(f);
-
-    Bitboard passed = friendlyPawns;
-    while (passed) {
-        const Square sq = pop_lsb(passed);
-        if (!isPassedPawn(sq, enemyPawns, color))
-            continue;
-
-        const int rr = pawnRelativeRank(sq, color);
-        score += PASSED_PAWN_BASE_BONUS + PASSED_PAWN_ADVANCE_BONUS * std::max(0, rr - 3);
-    }
-
-    return score;
+    return evaluateFeatures(f);
 }
 
 } // namespace
@@ -192,8 +172,37 @@ int evaluatePawns(const Position& position)
     const Bitboard whitePawns = position.pieces(WHITE, PAWN);
     const Bitboard blackPawns = position.pieces(BLACK, PAWN);
 
-    return evaluateSide(whitePawns, blackPawns, WHITE)
-         - evaluateSide(blackPawns, whitePawns, BLACK);
-}
+    auto sideScore = [&](Bitboard friendly, Bitboard enemy, Color color) {
+        const PawnFeatures f = analyzePawnStructure(friendly, enemy, color);
+        int score = evaluateFeatures(f);
 
+        Bitboard passed = friendly;
+        while (passed) {
+            const Square sq = pop_lsb(passed);
+            if (!isPassedPawn(sq, enemy, color))
+                continue;
+
+            const int rr = pawnRelativeRank(sq, color);
+            score += PASSED_PAWN_BASE_BONUS;
+
+            const int advanceRank = color == WHITE
+                ? rank_of(sq) + 1
+                : rank_of(sq) - 1;
+
+            const bool blocked = advanceRank < 0 || advanceRank > 7
+                || position.piece_on(make_square(file_of(sq), advanceRank)) != EMPTY;
+
+            // Advancement is valuable only when the pawn actually has a
+            // forward route. A blocked passed pawn remains structurally useful,
+            // but it should not receive dynamic advancement credit.
+            if (!blocked)
+                score += PASSED_PAWN_ADVANCE_BONUS * std::max(0, rr - 3);
+        }
+
+        return score;
+    };
+
+    return sideScore(whitePawns, blackPawns, WHITE)
+         - sideScore(blackPawns, whitePawns, BLACK);
+}
 } // namespace Zero::Evaluation
