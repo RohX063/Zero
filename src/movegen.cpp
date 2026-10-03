@@ -12,7 +12,6 @@ constexpr int knightOffsets[8][2] = {
     { 1, -2}, { 1, 2}, { 2, -1}, { 2, 1}
 };
 
-// Deltas are expressed in the old mailbox convention: row first, col second.
 constexpr int bishopDirections[4][2] = {
     {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
 };
@@ -114,7 +113,6 @@ void appendPawnFrom(const Position& pos, List& moves, Color us, Square from) {
             addMove(moves, from, oldSquare(twoRow, col));
     }
 
-    // Preserve the MVP capture ordering: left first, right second.
     for (int dc : {-1, 1}) {
         const int capRow = row + forward;
         const int capCol = col + dc;
@@ -173,7 +171,6 @@ void appendKingFrom(const Position& pos, List& moves, Color us, Square from) {
         addMove(moves, from, to);
     }
 
-    // Castling remains in the exact place in the per-piece generation order.
     const int rank = us == WHITE ? 0 : 7;
     const Square e = make_square(4, rank);
     if (from != e || pos.isSquareAttacked(e, ~us)) return;
@@ -200,14 +197,12 @@ void appendKingFrom(const Position& pos, List& moves, Color us, Square from) {
     }
 }
 
-}
+} // namespace
 
 void generateAllMoves(const Position& position, bool whiteToMove, MoveList<MAX_MOVES>& moves) {
     moves.count = 0;
     const Color us = whiteToMove ? WHITE : BLACK;
 
-    // Keep the MVP source-square order while using bitboard-backed occupancy
-    // and attack queries internally. The fixed buffer removes per-node heap work.
     for (int row = 0; row < 8; ++row) {
         for (int col = 0; col < 8; ++col) {
             const Square from = oldSquare(row, col);
@@ -251,6 +246,35 @@ void generateCaptureMoves(Position& position, bool whiteToMove, MoveList<MAX_MOV
     }
 }
 
+void generateQuietChecks(Position& position,
+                         bool whiteToMove,
+                         TacticalMoveList& list)
+{
+    list.count = 0;
+
+    const Color us = whiteToMove ? WHITE : BLACK;
+
+    MoveList<MAX_MOVES> pseudo;
+    generateAllMoves(position, whiteToMove, pseudo);
+
+    for (const Move& move : pseudo) {
+        // Captures/promotions are already covered by generateTacticalMoves().
+        if (move.isPromotion() || move.isEnPassant() || position.piece_on(move.to_sq()) != EMPTY)
+            continue;
+
+        StateInfo next;
+        position.doMove(move, next);
+
+        const bool legal = !position.isKingInCheck(us);
+        const bool givesCheck = position.isKingInCheck(!whiteToMove);
+
+        if (legal && givesCheck)
+            list.push(move);
+
+        position.undoMove(move);
+    }
+}
+
 std::vector<Move> generateAllMoves(const Position& position, bool whiteToMove) {
     MoveList<MAX_MOVES> list;
     generateAllMoves(position, whiteToMove, list);
@@ -269,8 +293,8 @@ std::vector<Move> generateCaptureMoves(Position& position, bool whiteToMove) {
     return std::vector<Move>(list.begin(), list.end());
 }
 
-
 namespace {
+
 inline void addTacticalMove(TacticalMoveList& list, Move move) {
     if (list.count < MAX_TACTICAL_MOVES)
         list.moves[list.count++] = move;
