@@ -1,12 +1,12 @@
 #include "search.h"
 
 #include <algorithm>
-#include <array>
 #include <iostream>
 
 #include "movegen.h"
 #include "movepick.h"
 #include "position.h"
+#include "repetition.h"
 
 namespace Zero::Search {
 
@@ -23,10 +23,18 @@ SearchResult Worker::searchRoot(Depth depth)
 
 SearchResult Worker::searchRootIteration(Depth depth)
 {
+    SearchResult result;
+
+    if (Rules::isAutomaticDraw(position_)) {
+        result.score = VALUE_DRAW;
+        result.depth = depth;
+        result.completed = true;
+        return result;
+    }
+
     FixedMoveList moves;
     generateLegalMoves(position_, position_.isWhiteToMove(), moves);
     if (moves.empty()) {
-        SearchResult result;
         result.depth = depth;
         result.completed = !shouldStop();
         return result;
@@ -35,31 +43,37 @@ SearchResult Worker::searchRootIteration(Depth depth)
     const Color us = position_.isWhiteToMove() ? WHITE : BLACK;
     const TTData rootTT = tt_.probe(position_.key());
 
-    MovePicker picker(position_, moves,
+    MovePicker picker(position_,
+                      moves,
                       rootTT.hit ? rootTT.move : Move::none(),
-                      Move::none(), killerMoves_.first(0), killerMoves_.second(0),
-                      &history_, us, EMPTY, SQ_NONE);
+                      Move::none(),
+                      killerMoves_.first(0),
+                      killerMoves_.second(0),
+                      &history_,
+                      us,
+                      EMPTY,
+                      SQ_NONE);
 
-    SearchResult result;
     Stack* ss = &stack_[0];
     *ss = Stack{};
     ss->ply = 0;
 
-    std::array<Move, MAX_MOVES> triedRoot{};
-    std::size_t triedCount = 0;
     bool firstMove = true;
 
     for (;;) {
-        if (shouldStop()) return result;
+        if (shouldStop())
+            return result;
 
         const Move move = picker.next_move();
-        if (!move.isOk()) break;
-        if (triedCount < triedRoot.size()) triedRoot[triedCount++] = move;
+        if (!move.isOk())
+            break;
 
         const Piece attacker = position_.piece_on(move.from_sq());
+
         StateInfo newState;
         ss->currentMove = move;
         ss->movedPiece = attacker;
+
         position_.doMove(move, newState);
 
         Stack* child = ss + 1;
@@ -69,48 +83,39 @@ SearchResult Worker::searchRootIteration(Depth depth)
         child->movedPiece = attacker;
 
         Value score;
+
         if (firstMove) {
-            score = -search(position_, child, std::max(0, depth - 1),
-                            -VALUE_INFINITE, VALUE_INFINITE);
+            score = -search(position_,
+                            child,
+                            std::max(0, depth - 1),
+                            -VALUE_INFINITE,
+                            VALUE_INFINITE);
             firstMove = false;
         } else {
-            score = -search(position_, child, std::max(0, depth - 1),
-                            -result.score - 1, -result.score);
+            score = -search(position_,
+                            child,
+                            std::max(0, depth - 1),
+                            -result.score - 1,
+                            -result.score);
+
             if (score > result.score) {
                 ++stats_.pvsReSearches;
-                score = -search(position_, child, std::max(0, depth - 1),
-                                -VALUE_INFINITE, -result.score);
+                score = -search(position_,
+                                child,
+                                std::max(0, depth - 1),
+                                -VALUE_INFINITE,
+                                -result.score);
             }
         }
 
         position_.undoMove(move);
-        if (shouldStop()) return result;
+
+        if (shouldStop())
+            return result;
 
         if (score > result.score || !result.bestMove.isOk()) {
             result.score = score;
             result.bestMove = move;
-        }
-    }
-
-    const int baseBonus = std::clamp(16 + 8 * std::max(1, depth), 16, 512);
-    const int winnerBonus = std::min(512, baseBonus * 2);
-    const int loserPenalty = std::max(8, baseBonus / 2);
-
-    for (std::size_t i = 0; i < triedCount; ++i) {
-        const Move move = triedRoot[i];
-        const Piece attacker = position_.piece_on(move.from_sq());
-        Piece victim = position_.piece_on(move.to_sq());
-        if (move.isEnPassant())
-            victim = make_piece(position_.isWhiteToMove() ? BLACK : WHITE, PAWN);
-
-        const bool quiet = victim == EMPTY && !move.isPromotion() && !move.isEnPassant();
-        const int bonus = move == result.bestMove ? winnerBonus : -loserPenalty;
-
-        if (quiet) {
-            history_.updateQuiet(us, attacker, move.from_sq(), move.to_sq(),
-                                 EMPTY, SQ_NONE, bonus);
-        } else if (victim != EMPTY) {
-            history_.updateCapture(attacker, victim, move.to_sq(), bonus);
         }
     }
 
@@ -132,9 +137,12 @@ SearchResult Worker::iterativeDeepening(const Limits& limits)
 
     SearchResult lastCompleted;
     for (Depth depth = 1; depth <= MAX_PLY - 1; ++depth) {
-        if (limits.depth > 0 && depth > limits.depth) break;
+        if (limits.depth > 0 && depth > limits.depth)
+            break;
+
         SearchResult result = searchRootIteration(depth);
-        if (!result.completed) break;
+        if (!result.completed)
+            break;
 
         lastCompleted = result;
         std::cout << "info depth " << depth
@@ -143,8 +151,10 @@ SearchResult Worker::iterativeDeepening(const Limits& limits)
                   << " hashfull " << tt_.hashfull()
                   << std::endl;
 
-        if (shouldStop()) break;
+        if (shouldStop())
+            break;
     }
+
     return lastCompleted;
 }
 
@@ -159,24 +169,33 @@ void Worker::beginSearch(const Limits& limits)
 
     const int budgetMs = computeTimeBudgetMs(limits);
     if (budgetMs > 0)
-        deadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(budgetMs);
+        deadline_ = std::chrono::steady_clock::now()
+                  + std::chrono::milliseconds(budgetMs);
 }
 
 bool Worker::shouldStop() const
 {
-    if (deadline_ == std::chrono::steady_clock::time_point{}) return false;
-    if ((clockNodes_ & 1023ULL) != 0) return false;
+    if (deadline_ == std::chrono::steady_clock::time_point{})
+        return false;
+
+    if ((clockNodes_ & 1023ULL) != 0)
+        return false;
+
     return std::chrono::steady_clock::now() >= deadline_;
 }
 
 int Worker::computeTimeBudgetMs(const Limits& limits) const
 {
-    if (limits.movetimeMs > 0) return limits.movetimeMs;
-    if (limits.sideTimeMs <= 0) return 0;
+    if (limits.movetimeMs > 0)
+        return limits.movetimeMs;
+
+    if (limits.sideTimeMs <= 0)
+        return 0;
 
     const int moves = limits.movesToGo > 0 ? limits.movesToGo : 30;
     int budget = limits.sideTimeMs / std::max(1, moves);
     budget += (3 * limits.incrementMs) / 4;
+
     const int reserve = std::min(250, std::max(10, limits.sideTimeMs / 50));
     return std::max(1, budget - reserve);
 }
