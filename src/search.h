@@ -34,6 +34,7 @@ struct SearchStats {
     std::uint64_t nullMoveCutoffs = 0;
     std::uint64_t checkExtensions = 0;
     std::uint64_t promotionExtensions = 0;
+    std::uint64_t quietChecksInQSearch = 0;
 };
 
 struct Limits {
@@ -66,11 +67,15 @@ public:
     bool shouldStop() const;
 
     void setHashSize(std::size_t megabytes) { tt_.resize(megabytes); }
+
+    // Correct hash-reset semantics: UCI ucinewgame must clear the TT itself.
     void clearHash() { tt_.clear(); }
+
     void clearHistory() {
         history_.clear();
         counterMoves_.clear();
     }
+
     void clearKillers() { killerMoves_.clear(); }
 
     Move killerMoveFor(Depth ply, std::size_t slot) const;
