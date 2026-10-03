@@ -9,7 +9,7 @@ namespace Zero::Search {
 
 class QMovePicker {
 public:
-    explicit QMovePicker(const Position& position, bool whiteToMove);
+    explicit QMovePicker(Position& position, bool whiteToMove);
     Move next_move();
 
 private:
