@@ -33,14 +33,15 @@ struct MoveList {
 };
 
 using FixedMoveList = MoveList<MAX_MOVES>;
-
 struct TacticalMoveList : MoveList<MAX_TACTICAL_MOVES> {};
 
-// Hot-path APIs write into caller-owned fixed buffers. The vector-returning
-// wrappers remain for UCI/test compatibility and non-search callers.
 void generateAllMoves(const Position& position, bool whiteToMove, FixedMoveList& list);
 void generateLegalMoves(Position& position, bool whiteToMove, FixedMoveList& list);
 void generateCaptureMoves(Position& position, bool whiteToMove, FixedMoveList& list);
+
+// Quiet checking moves for QSearch. These deliberately exclude captures and
+// promotions because those are already supplied by generateTacticalMoves().
+void generateQuietChecks(Position& position, bool whiteToMove, TacticalMoveList& list);
 
 std::vector<Move> generateAllMoves(const Position& position, bool whiteToMove);
 std::vector<Move> generateLegalMoves(Position& position, bool whiteToMove);
