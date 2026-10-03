@@ -63,6 +63,11 @@ int lmrReduction(Depth depth, int moveCount, int historyScore, bool inCheck)
     return std::min(reduction, depth - 2);
 }
 
+// A small positive margin prevents null-move pruning from firing on positions
+// that barely meet beta. This is deliberately conservative while ZERO's
+// selective search is still being validated for tactical correctness.
+constexpr Value NULL_MOVE_MARGIN = 64;
+
 } // namespace
 
 Worker::Worker(Position& position)
@@ -89,8 +94,6 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
     if (shouldStop())
         return VALUE_DRAW;
 
-    // Game-state draws are resolved before evaluator/search work. A repeated
-    // position must not be "rescued" by another tactical branch in the tree.
     if (Rules::isAutomaticDraw(position))
         return VALUE_DRAW;
 
@@ -98,6 +101,8 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
 
     if (depth <= 0)
         return QSearch(*this).run(position, ss, alpha, beta);
+
+    const bool pvNode = alpha + 1 < beta;
 
     const Key key = position.key();
     const Value alphaOriginal = alpha;
@@ -121,10 +126,15 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
             : -evaluatePosition(position);
     }
 
-    if (depth >= 3
+    // Null-move pruning is deliberately disabled at PV nodes. A full-window
+    // node is where ZERO must prove the principal variation rather than infer
+    // a cutoff from the right to move. The additional margin also reduces
+    // tactical false positives while the pruning subsystem is being validated.
+    if (depth >= 4
+        && !pvNode
         && ss->canNullMove
         && !ss->inCheck
-        && ss->staticEval >= beta)
+        && ss->staticEval >= beta + NULL_MOVE_MARGIN)
     {
         const Color us = position.isWhiteToMove() ? WHITE : BLACK;
         const Bitboard nonPawnMaterial =
@@ -185,7 +195,9 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
     const Color us = position.isWhiteToMove() ? WHITE : BLACK;
     const Move previousMove = ss->ply > 0 ? ss->currentMove : Move::none();
     const Piece previousPiece = ss->ply > 0 ? ss->movedPiece : EMPTY;
-    const Square previousTo = previousMove.isOk() ? previousMove.to_sq() : SQ_NONE;
+    const Square previousTo = previousMove.isOk()
+        ? previousMove.to_sq()
+        : SQ_NONE;
 
     const Move counterMove = previousMove.isOk()
         ? counterMoves_.probe(previousPiece, previousTo)
@@ -232,7 +244,12 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
         int quietHistory = 0;
         if (quiet) {
             quietHistory = history_.quietScore(
-                us, attacker, move.from_sq(), move.to_sq(), previousPiece, previousTo);
+                us,
+                attacker,
+                move.from_sq(),
+                move.to_sq(),
+                previousPiece,
+                previousTo);
         }
 
         StateInfo newState;
@@ -246,14 +263,18 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
         child->canNullMove = true;
 
         int extension = 0;
+        bool givesCheck = false;
+
         if (ss->ply + 2 < MAX_PLY) {
-            const bool givesCheck = position.isKingInCheck(position.isWhiteToMove());
+            givesCheck = position.isKingInCheck(position.isWhiteToMove());
+
             if (givesCheck) {
-                ++extension;
+                extension++;
                 ++stats_.checkExtensions;
             }
+
             if (move.isPromotion()) {
-                ++extension;
+                extension++;
                 ++stats_.promotionExtensions;
             }
         }
@@ -261,8 +282,22 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
         const Depth fullDepth = std::max(0, depth - 1 + extension);
 
         int reduction = 0;
-        if (!firstMove && quiet && !move.isPromotion()) {
-            reduction = lmrReduction(depth, moveCount, quietHistory, ss->inCheck);
+
+        // Critical tactical-stability rule:
+        // checking moves are never LMR candidates. If ZERO has just created a
+        // check, that move must get the full tactical horizon immediately;
+        // otherwise a reduced probe can incorrectly fail low and suppress a
+        // forcing line before the full-window verification ever happens.
+        if (!firstMove
+            && quiet
+            && !move.isPromotion()
+            && !givesCheck)
+        {
+            reduction = lmrReduction(depth,
+                                     moveCount,
+                                     quietHistory,
+                                     ss->inCheck);
+
             if (reduction > 0)
                 ++stats_.lmrReductions;
         }
@@ -278,6 +313,7 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
             firstMove = false;
         } else {
             const Depth probeDepth = std::max(0, fullDepth - reduction);
+
             score = -search(position,
                             child,
                             probeDepth,
@@ -354,7 +390,7 @@ Value Worker::search(Position& position, Stack* ss, Depth depth, Value alpha, Va
               bound,
               depth,
               bestMove,
-              beta - alphaOriginal > 1);
+              pvNode);
 
     if (previousMove.isOk() && bestMove.isOk())
         counterMoves_.update(previousPiece, previousTo, bestMove);
