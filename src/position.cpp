@@ -20,6 +20,7 @@ Position& Position::operator=(const Position& other) {
     occupancy_ = other.occupancy_;
     rootState_ = *other.state_;
     rootState_.previous = nullptr;
+    rootState_.isNullMove = false;
     state_ = &rootState_;
     return *this;
 }
@@ -37,7 +38,8 @@ bool Position::equals(const Position& other) const {
         && state_->whiteQueenSideCastle == other.state_->whiteQueenSideCastle
         && state_->blackKingSideCastle == other.state_->blackKingSideCastle
         && state_->blackQueenSideCastle == other.state_->blackQueenSideCastle
-        && state_->epSquare == other.state_->epSquare;
+        && state_->epSquare == other.state_->epSquare
+        && state_->halfmoveClock == other.state_->halfmoveClock;
 }
 
 void Position::clearBoard() {
@@ -47,6 +49,8 @@ void Position::clearBoard() {
     byType_.fill(0);
     occupancy_ = 0;
     state_->key = 0;
+    state_->halfmoveClock = 0;
+    state_->isNullMove = false;
 }
 
 void Position::putPiece(Square sq, Piece piece) {
@@ -156,7 +160,19 @@ bool Position::loadFEN(const std::string& fen) {
         if (epPart.size() != 2 || epPart[0] < 'a' || epPart[0] > 'h' || epPart[1] < '1' || epPart[1] > '8')
             return false;
         state_->epSquare = make_square(epPart[0] - 'a', epPart[1] - '1');
+
+        // Only retain an en-passant right when the side to move actually has
+        // a pawn that can capture onto the EP square. This prevents irrelevant
+        // FEN EP fields from creating false repetition-key differences.
+        const Color capturer = state_->whiteToMove ? WHITE : BLACK;
+        const Bitboard capturers =
+            pieces(capturer, PAWN) & Bitboards::PawnAttacks[capturer][state_->epSquare];
+        if (capturers == 0)
+            state_->epSquare = SQ_NONE;
     }
+
+    state_->halfmoveClock = std::max(0, halfmoveClock);
+    state_->isNullMove = false;
 
     if (!state_->whiteToMove)
         state_->key ^= Zobrist::side;
@@ -189,6 +205,8 @@ void Position::initialize() {
     state_->whiteQueenSideCastle = true;
     state_->blackKingSideCastle = true;
     state_->blackQueenSideCastle = true;
+    state_->halfmoveClock = 0;
+    state_->isNullMove = false;
     state_->key ^= Zobrist::castling_key(castlingRightsMask());
 }
 
@@ -247,6 +265,7 @@ bool Position::isKingInCheck(bool whiteKing) const {
 void Position::doMove(const Move& move, StateInfo& newState) {
     newState = *state_;
     newState.previous = state_;
+    newState.isNullMove = false;
     newState.movedPiece = board_[move.from];
     newState.capturedPiece = board_[move.to];
     state_ = &newState;
@@ -272,10 +291,17 @@ void Position::doMove(const Move& move, StateInfo& newState) {
     putPiece(move.to, placed);
     state_->capturedPiece = captured;
 
-    if (moving == WHITE_PAWN && rank_of(move.from) == 1 && rank_of(move.to) == 3)
-        state_->epSquare = make_square(file_of(move.from), 2);
-    else if (moving == BLACK_PAWN && rank_of(move.from) == 6 && rank_of(move.to) == 4)
-        state_->epSquare = make_square(file_of(move.from), 5);
+    if (moving == WHITE_PAWN && rank_of(move.from) == 1 && rank_of(move.to) == 3) {
+        const Square ep = make_square(file_of(move.from), 2);
+        const Bitboard capturers = pieces(BLACK, PAWN) & Bitboards::PawnAttacks[BLACK][ep];
+        if (capturers)
+            state_->epSquare = ep;
+    } else if (moving == BLACK_PAWN && rank_of(move.from) == 6 && rank_of(move.to) == 4) {
+        const Square ep = make_square(file_of(move.from), 5);
+        const Bitboard capturers = pieces(WHITE, PAWN) & Bitboards::PawnAttacks[WHITE][ep];
+        if (capturers)
+            state_->epSquare = ep;
+    }
 
     if (move.isCastle()) {
         const Color us = color_of(moving);
@@ -294,6 +320,11 @@ void Position::doMove(const Move& move, StateInfo& newState) {
     }
     setCastlingRightsForRookSquare(move.from);
     clearCastlingRightsForCapturedRook(move.to, captured);
+
+    state_->halfmoveClock =
+        (type_of(moving) == PAWN || captured != EMPTY)
+            ? 0
+            : state_->halfmoveClock + 1;
 
     state_->key ^= Zobrist::castling_key(oldCastlingRights);
     state_->key ^= Zobrist::castling_key(castlingRightsMask());
@@ -336,6 +367,7 @@ void Position::doNullMove(StateInfo& newState) {
     newState.previous = state_;
     newState.capturedPiece = EMPTY;
     newState.movedPiece = EMPTY;
+    newState.isNullMove = true;
     state_ = &newState;
     state_->key ^= Zobrist::en_passant_key(state_->epSquare);
     state_->epSquare = SQ_NONE;
@@ -389,7 +421,6 @@ void Position::switchSide() {
     state_->key ^= Zobrist::side;
     state_->whiteToMove = !state_->whiteToMove;
 }
-
 
 int Position::castlingRightsMask() const {
     return (state_->whiteKingSideCastle ? 1 : 0)
