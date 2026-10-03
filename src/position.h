@@ -19,6 +19,13 @@ struct StateInfo {
     bool whiteToMove = true;
     Piece capturedPiece = EMPTY;
     Piece movedPiece = EMPTY;
+
+    // FIDE fifty/seventy-five-move counter. It advances on reversible moves
+    // and resets after pawn moves or captures.
+    int halfmoveClock = 0;
+
+    // Null moves are search-only and must not participate in repetition scans.
+    bool isNullMove = false;
 };
 
 class Position
@@ -74,6 +81,8 @@ public:
     int getEnPassantRow() const;
     int getEnPassantCol() const;
 
+    int halfmove_clock() const { return state_->halfmoveClock; }
+
     void doNullMove(StateInfo& newState);
     void undoNullMove();
 
@@ -88,7 +97,7 @@ private:
     void clearCastlingRightsForCapturedRook(Zero::Square sq, Piece captured);
     int castlingRightsMask() const;
 
-    std::array<Piece, Zero::SQUARE_NB> board_{}; // square -> piece lookup, bitboards drive move generation
+    std::array<Piece, Zero::SQUARE_NB> board_{};
     std::array<Zero::Bitboard, PIECE_NB> byPiece_{};
     std::array<Zero::Bitboard, Zero::COLOR_NB> byColor_{};
     std::array<Zero::Bitboard, Zero::PIECE_TYPE_NB> byType_{};
