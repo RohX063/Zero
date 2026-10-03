@@ -62,7 +62,6 @@ int countAbsolutePins(const Position& position, Color attacker)
         if (!inBoard(file, rank))
             continue;
 
-        // First blocker from the king must be a victim piece.
         while (inBoard(file, rank) &&
                position.piece_on(make_square(file, rank)) == EMPTY) {
             file += df[dir];
@@ -75,7 +74,6 @@ int countAbsolutePins(const Position& position, Color attacker)
         if (pinned == EMPTY || color_of(pinned) != victim || type_of(pinned) == KING)
             continue;
 
-        // Second blocker must be an attacker slider compatible with the ray.
         file += df[dir];
         rank += dr[dir];
         while (inBoard(file, rank) &&
@@ -166,8 +164,6 @@ int countSkewers(const Position& position, Color attacker)
     const int kingFile = file_of(king);
     const int kingRank = rank_of(king);
 
-    // A skewer exists statically when the king is the front target on a clear
-    // slider line and a second enemy unit lies behind the king on that line.
     for (int dir = 0; dir < 8; ++dir) {
         const bool orthogonal = dir < 4;
 
@@ -295,12 +291,17 @@ ThreatFeatures analyzeThreats(const Position& position, Color color)
             const Piece victim = position.piece_on(sq);
             const Bitboard defenders = position.attackers_to(sq, enemy);
             const int victimValue = pieceValue(victim);
+            const int defenderCount = popcount(defenders);
 
-            if (!defenders) {
-                ++result.loosePieces;
+            // A hanging piece has no defenders. A loose piece is separated
+            // from that stronger condition: it has exactly one defender.
+            // This removes the previous double-counting of undefended pieces.
+            if (defenderCount == 0) {
                 ++result.hangingPieces;
-                looseValue += victimValue;
                 hangingValue += victimValue;
+            } else if (defenderCount == 1) {
+                ++result.loosePieces;
+                looseValue += victimValue;
             }
 
             if (popcount(attackers) >= 2)
