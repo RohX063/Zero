@@ -1,6 +1,6 @@
 <div align="center">
 
-# ♟️ ZERO
+#  ZERO
 
 ### A UCI chess engine with a handcrafted evaluation, built from scratch in C++17
 
