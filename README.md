@@ -98,7 +98,7 @@ hardware used. R3.4 has not been re-measured on the same scale yet.
 | Games | 400, colours swapped, balanced 8-ply openings |
 | Time control | 10 s + 0.1 s |
 | Opening suite | `tuning/zero_openings_8ply.epd` |
-| Search tree | Identical to R3.4 (`bench` signature `499f672cf52e32bc`), so the difference is speed only |
+| Fixed-depth equivalence: R3.5 produced identical best moves, scores and node counts to R3.4 across all 101 benchmark positions at depth 7 (14,265,862 total nodes; signature 499f672cf52e32bc). This validates equivalent benchmark results for the tested positions. |
 
 | Result | Value |
 |---|---|
@@ -248,8 +248,7 @@ flowchart TD
 
 ## ⚙️ UCI options
 
-All search constants are exposed as options, so they can be tuned with SPSA or checked in
-SPRT without recompiling.
+The tunable search parameters are exposed as UCI options, allowing them to be adjusted through SPSA and evaluated through match testing.
 
 ### General
 
@@ -497,8 +496,7 @@ to be re-derived.
 
 **Author:** Rohan Singh
 
-**License:** *not yet chosen*. Add a `LICENSE` file before publishing widely
-(MIT, Apache-2.0 and GPL-3.0 are the usual choices for chess engines).
+**License:** *not yet chosen*.
 
 **Acknowledgements:** the [Chess Programming Wiki](https://www.chessprogramming.org/),
 [Cute Chess](https://cutechess.com/), and the wider computer-chess community.
