@@ -6,7 +6,7 @@
 
 ![Language](https://img.shields.io/badge/C%2B%2B-20-blue?logo=cplusplus)
 ![Protocol](https://img.shields.io/badge/protocol-UCI-success)
-![Version](https://img.shields.io/badge/version-2.6%20R3.5%20QS-L0-orange)
+![Version](https://img.shields.io/badge/version-2.6%20R3.5%20QS--L0-orange)
 ![Eval](https://img.shields.io/badge/eval-HCE-informational)
 ![Status](https://img.shields.io/badge/status-active%20development-yellow)
 
