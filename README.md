@@ -2,7 +2,7 @@
 
 #  ZERO
 
-### A UCI chess engine with a handcrafted evaluation, built from scratch in C++17
+### A UCI chess engine with a handcrafted evaluation, built from scratch in C++20
 
 ![Language](https://img.shields.io/badge/C%2B%2B-20-blue?logo=cplusplus)
 ![Protocol](https://img.shields.io/badge/protocol-UCI-success)
