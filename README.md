@@ -47,7 +47,7 @@
 | **Search** | Iterative-deepening principal-variation search with a transposition table |
 | **Evaluation** | Handcrafted: material, piece-square tables, mobility, pawn structure, king safety, threats |
 | **Threads** | Single-threaded (multi-threading is planned) |
-| Next milestone: QSearch Layer 1, followed by ThreatForge integration, the pruning stack and tapered evaluation. |
+| **Next milestone** | QSearch Layer 1, followed by ThreatForge integration, the pruning stack and tapered evaluation. |
 
 ---
 
