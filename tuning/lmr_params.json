@@ -1,0 +1,75 @@
+{
+  "LMRBase": {
+    "value": 982,
+    "min": 700,
+    "max": 1300,
+    "ck": 32,
+    "ak": 8.0
+  },
+  "LMRDepthCoeff": {
+    "value": 0,
+    "min": -128,
+    "max": 128,
+    "ck": 16,
+    "ak": 4.0
+  },
+  "LMRMoveCoeff": {
+    "value": 0,
+    "min": -128,
+    "max": 128,
+    "ck": 16,
+    "ak": 4.0
+  },
+  "LMRPVAdjust": {
+    "value": -512,
+    "min": -1536,
+    "max": 0,
+    "ck": 64,
+    "ak": 8.0
+  },
+  "LMRCutAdjust": {
+    "value": 512,
+    "min": -512,
+    "max": 1536,
+    "ck": 64,
+    "ak": 8.0
+  },
+  "LMRTTAdjust": {
+    "value": -1024,
+    "min": -2048,
+    "max": -256,
+    "ck": 64,
+    "ak": 8.0
+  },
+  "LMRHistoryCoeff": {
+    "value": -16,
+    "min": -64,
+    "max": 32,
+    "ck": 4,
+    "ak": 2.0
+  },
+  "LMRContinuationCoeff": {
+    "value": 0,
+    "min": -64,
+    "max": 32,
+    "ck": 4,
+    "ak": 2.0
+  },
+  "LMRImprovingAdjust": {
+    "value": -256,
+    "min": -768,
+    "max": 256,
+    "ck": 32,
+    "ak": 4.0
+  },
+  "LMRTacticalSafetyAdjust": {
+    "value": 0,
+    "min": -768,
+    "max": 256,
+    "ck": 32,
+    "ak": 4.0
+  },
+  "interaction_fixed": 503.4375,
+  "units": "1/1024 ply",
+  "phase": "1_lmr_context_spsa"
+}

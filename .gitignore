@@ -1,0 +1,32 @@
+@'
+# CMake build directories
+/build/
+/build-*/
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+*.ilk
+
+# Visual Studio
+.vs/
+*.suo
+
+# OS files
+.DS_Store
+Thumbs.db
+'@ | Set-Content .gitignore
