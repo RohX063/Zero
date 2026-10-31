@@ -41,7 +41,7 @@
 |---|---|
 | **Engine name** | ZERO 2.6 R3.5 QS-L0 |
 | **Author** | Rohan Singh |
-| **Language** | C++17 (no external dependencies) |
+| **Language** | C++20 (no external dependencies) |
 | **Protocol** | UCI: works with Cute Chess, Arena, Lucas Chess and similar GUIs |
 | **Board** | 64-bit bitboards (A1 = bit 0) plus a 64-square piece lookup |
 | **Search** | Iterative-deepening principal-variation search with a transposition table |
