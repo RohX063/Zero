@@ -141,7 +141,7 @@ ctest --test-dir build -C Release --output-on-failure
 ### Build with a single command (g++ / clang++)
 
 ```bash
-g++ -std=c++17 -O3 -DNDEBUG -Isrc src/*.cpp src/evaluation/*.cpp -o zero
+g++ -std=c++20 -O3 -DNDEBUG -Isrc src/*.cpp src/evaluation/*.cpp -o zero
 ```
 
 ### Use it in a GUI
