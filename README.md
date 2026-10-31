@@ -47,7 +47,7 @@
 | **Search** | Iterative-deepening principal-variation search with a transposition table |
 | **Evaluation** | Handcrafted: material, piece-square tables, mobility, pawn structure, king safety, threats |
 | **Threads** | Single-threaded (multi-threading is planned) |
-| **Next milestone** | ThreatForge port, then pruning stack, then tapered and tuned evaluation |
+| Next milestone: QSearch Layer 1, followed by ThreatForge integration, the pruning stack and tapered evaluation. |
 
 ---
 
@@ -98,7 +98,7 @@ hardware used. R3.4 has not been re-measured on the same scale yet.
 | Games | 400, colours swapped, balanced 8-ply openings |
 | Time control | 10 s + 0.1 s |
 | Opening suite | `tuning/zero_openings_8ply.epd` |
-| Fixed-depth equivalence: R3.5 produced identical best moves, scores and node counts to R3.4 across all 101 benchmark positions at depth 7 (14,265,862 total nodes; signature 499f672cf52e32bc). This validates equivalent benchmark results for the tested positions. |
+| The benchmark checks 101 positions at depth 7 and compares best move, score and node count. Its signature is calculated from those results. It does not hash the complete sequence of visited search nodes. |
 
 | Result | Value |
 |---|---|
