@@ -1,10 +1,10 @@
 <div align="center">
 
-# ♟️ ZERO
+#  ZERO
 
 ### A UCI chess engine with a handcrafted evaluation, built from scratch in C++17
 
-![Language](https://img.shields.io/badge/C%2B%2B-17-blue?logo=cplusplus)
+![Language](https://img.shields.io/badge/C%2B%2B-20-blue?logo=cplusplus)
 ![Protocol](https://img.shields.io/badge/protocol-UCI-success)
 ![Version](https://img.shields.io/badge/version-2.6%20R3.4%20Clean-orange)
 ![Eval](https://img.shields.io/badge/eval-HCE-informational)
