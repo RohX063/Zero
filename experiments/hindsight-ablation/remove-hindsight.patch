@@ -1,0 +1,319 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -25,7 +25,6 @@
+     src/search.cpp
+     src/search_helpers.cpp
+     src/search_time.cpp
+-    src/search_mistake.cpp
+     src/qsearch.cpp
+     src/search_root.cpp
+     src/thread.cpp
+@@ -63,7 +62,7 @@
+         tests/search_smoke.cpp
+         src/bitboard.cpp src/position.cpp src/movegen.cpp src/movepick.cpp
+         src/countermove.cpp src/history.cpp src/killer.cpp
+-        src/zobrist.cpp src/tt.cpp src/search.cpp src/search_helpers.cpp src/search_mistake.cpp src/qsearch.cpp src/search_root.cpp src/search_time.cpp
++        src/zobrist.cpp src/tt.cpp src/search.cpp src/search_helpers.cpp src/qsearch.cpp src/search_root.cpp src/search_time.cpp
+         src/thread.cpp src/repetition.cpp src/evaluation.cpp
+         src/evaluation/material.cpp src/evaluation/pawns.cpp src/evaluation/mobility.cpp
+         src/evaluation/king.cpp src/evaluation/threats.cpp src/pst.cpp
+@@ -85,7 +84,7 @@
+         src/bitboard.cpp src/position.cpp src/movegen.cpp src/movepick.cpp
+         src/zobrist.cpp src/tt.cpp src/search.cpp src/qsearch.cpp src/search_root.cpp src/search_time.cpp
+         src/repetition.cpp src/history.cpp src/countermove.cpp src/killer.cpp
+-        src/search_helpers.cpp src/search_mistake.cpp
++        src/search_helpers.cpp
+         src/evaluation.cpp src/evaluation/material.cpp src/evaluation/pawns.cpp
+         src/evaluation/mobility.cpp src/evaluation/king.cpp src/evaluation/threats.cpp src/pst.cpp
+     )
+@@ -105,13 +104,7 @@
+     zero_enable_warnings(search_time_test)
+     add_test(NAME search_time COMMAND search_time_test)
+ 
+-    add_executable(mistake_punisher_test
+-        tests/mistake_punisher.cpp
+-        src/search_mistake.cpp
+-    )
+-    target_include_directories(mistake_punisher_test PRIVATE src)
+-    zero_enable_warnings(mistake_punisher_test)
+-    add_test(NAME mistake_punisher COMMAND mistake_punisher_test)
++
+ endif()
+ 
+ # Python tuning harness is intentionally runtime-only and does not add Python as
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -1,6 +1,5 @@
+ #include "search.h"
+ #include "search_helpers.h"
+-#include "search_mistake.h"
+ #include "search_params.h"
+ 
+ #include <algorithm>
+@@ -211,13 +210,6 @@
+ 
+     const bool pvNode = alpha + 1 < beta;
+ 
+-    // The parent publishes the reduction it applied to reach this node in its
+-    // own stack slot; read it once and clear it so a later full-depth
+-    // re-search from the parent never inherits a stale value.
+-    const int priorReduction = ss->ply >= 1 ? (ss - 1)->reduction : 0;
+-    if (ss->ply >= 1)
+-        (ss - 1)->reduction = 0;
+-
+     const Key key = position.key();
+     const Value alphaOriginal = alpha;
+     const TTData ttData = tt_.probe(key);
+@@ -247,21 +239,6 @@
+ 
+     const bool improving = ss->ply >= 2 && ss->evalValid && (ss - 2)->evalValid
+         && ss->staticEval > (ss - 2)->staticEval;
+-
+-    const bool haveParentEval = ss->ply >= 1 && ss->evalValid && (ss - 1)->evalValid;
+-
+-    // Hindsight depth correction (see search_mistake.h).
+-    if (haveParentEval && ss->ply >= 2 && depth >= 3) {
+-        HindsightParams hp;
+-        hp.recoverReduction = params_.hindsightRecoverReduction;
+-        hp.trimReduction    = params_.hindsightTrimReduction;
+-        hp.trimEvalSum      = params_.hindsightTrimEvalSum;
+-        depth = std::min(Depth(MAX_PLY - 1),
+-                         hindsightDepthAdjustment(
+-                             depth, priorReduction, *ss, *(ss - 1), hp));
+-    }
+-
+-    const bool opponentWorsened = haveParentEval && opponentWorsening(*ss, *(ss - 1));
+ 
+     // Null-move pruning at expected cut nodes.
+     //  * margin and reduction come from SearchParams (ZERO-tuned)
+@@ -483,9 +460,6 @@
+                 std::max(0, fullDepth - 1),
+                 (reduction1024 + 512) / 1024);
+ 
+-            reduction = punishOpponentWorsening(
+-                reduction, opponentWorsened, moveCount, pvNode);
+-
+             if (reduction > 0)
+                 ++stats_.lmrReductions;
+         }
+@@ -498,11 +472,8 @@
+         } else {
+             const Depth probeDepth = std::max(0, fullDepth - reduction);
+ 
+-            // Publish the reduction for the child's hindsight correction.
+-            ss->reduction = reduction;
+             score = -search(position, child, probeDepth, -alpha - 1, -alpha,
+                             reduction > 0 ? true : nonFirstChildCut);
+-            ss->reduction = 0;
+ 
+             // A reduced probe that beats alpha is verified at full depth with
+             // the same zero window; only PV nodes then widen the window.
+--- a/src/search_params.h
++++ b/src/search_params.h
+@@ -30,11 +30,6 @@
+     int nmpVerifyDepth     = 10;
+     int nmpVerifyPercent   = 65;
+ 
+-    // --- Hindsight depth correction ("mistake punisher") -------------------
+-    int hindsightRecoverReduction = 3;   // prior reduction needed to give a ply back
+-    int hindsightTrimReduction    = 2;   // prior reduction needed to take a ply away
+-    int hindsightTrimEvalSum      = 150; // static-eval sum above which a ply is trimmed
+-
+     // --- Extensions ----------------------------------------------------------
+     int checkExtension       = 1;    // 0/1
+     int promotionExtension   = 1;    // 0/1
+@@ -65,9 +60,9 @@
+     int hi;
+ };
+ 
+-inline const std::array<ParamDef, 19>& searchParamTable()
++inline const std::array<ParamDef, 16>& searchParamTable()
+ {
+-    static const std::array<ParamDef, 19> table = {{
++    static const std::array<ParamDef, 16> table = {{
+         {"NMPMinDepth",              &SearchParams::nmpMinDepth,              3,   12},
+         {"NMPMarginBase",            &SearchParams::nmpMarginBase,          -200,  600},
+         {"NMPMarginPerDepth",        &SearchParams::nmpMarginPerDepth,         0,   40},
+@@ -77,9 +72,6 @@
+         {"NMPEvalCap",               &SearchParams::nmpEvalCap,                0,    6},
+         {"NMPVerifyDepth",           &SearchParams::nmpVerifyDepth,            6,   30},
+         {"NMPVerifyPercent",         &SearchParams::nmpVerifyPercent,         25,  100},
+-        {"HindsightRecoverReduction",&SearchParams::hindsightRecoverReduction,  2,    8},
+-        {"HindsightTrimReduction",   &SearchParams::hindsightTrimReduction,     1,    6},
+-        {"HindsightTrimEvalSum",     &SearchParams::hindsightTrimEvalSum,      0,  600},
+         {"CheckExtension",           &SearchParams::checkExtension,            0,    1},
+         {"PromotionExtension",       &SearchParams::promotionExtension,        0,    1},
+         {"ExtensionPlyLimitPct",     &SearchParams::extensionPlyLimitPct,    100,  400},
+--- a/src/search_stack.h
++++ b/src/search_stack.h
+@@ -17,7 +17,6 @@
+     int ply = 0;
+     int moveCount = 0;
+     int nmpMinPly = 0;
+-    int reduction = 0;
+     bool inCheck = false;
+     // True only when staticEval holds a real evaluation for this node (nodes in
+     // check, shallow nodes and fresh stack slots do not).
+--- a/src/search_mistake.cpp
++++ /dev/null
+@@ -1,60 +0,0 @@
+-#include "search_mistake.h"
+-
+-#include <algorithm>
+-
+-namespace Zero::Search {
+-
+-namespace {
+-constexpr int EARLY_PUNISH_MOVE_LIMIT = 6;
+-}
+-
+-bool opponentWorsening(const Stack& current, const Stack& previous)
+-{
+-    // Both evaluations are kept in the node's own negamax perspective.
+-    return current.staticEval > -previous.staticEval;
+-}
+-
+-Depth hindsightDepthAdjustment(Depth depth,
+-                               int priorReduction,
+-                               const Stack& current,
+-                               const Stack& previous,
+-                               const HindsightParams& params)
+-{
+-    int adjusted = depth;
+-    const bool worsened = opponentWorsening(current, previous);
+-
+-    if (priorReduction >= params.recoverReduction && !worsened)
+-        ++adjusted;
+-
+-    if (priorReduction >= params.trimReduction
+-        && adjusted >= 2
+-        && current.staticEval + previous.staticEval > params.trimEvalSum)
+-        --adjusted;
+-
+-    return std::max<Depth>(1, adjusted);
+-}
+-
+-Depth hindsightDepthAdjustment(Depth depth,
+-                               int priorReduction,
+-                               const Stack& current,
+-                               const Stack& previous)
+-{
+-    return hindsightDepthAdjustment(depth, priorReduction, current, previous,
+-                                    HindsightParams{});
+-}
+-
+-int punishOpponentWorsening(int reduction,
+-                            bool opponentWorsened,
+-                            int moveCount,
+-                            bool pvNode)
+-{
+-    if (!opponentWorsened || pvNode || reduction <= 0)
+-        return std::max(0, reduction);
+-
+-    if (moveCount <= EARLY_PUNISH_MOVE_LIMIT)
+-        return std::max(0, reduction - 1);
+-
+-    return reduction;
+-}
+-
+-} // namespace Zero::Search
+--- a/src/search_mistake.h
++++ /dev/null
+@@ -1,49 +0,0 @@
+-#ifndef ZERO_SEARCH_MISTAKE_H
+-#define ZERO_SEARCH_MISTAKE_H
+-
+-#include "search_stack.h"
+-#include "types.h"
+-
+-namespace Zero::Search {
+-
+-// Search-context signal: the opponent's last move "worsened" their own position
+-// when our static evaluation now exceeds the negation of the evaluation they had
+-// one ply earlier. Pure function so it can be tested without a Position/Worker.
+-bool opponentWorsening(const Stack& current, const Stack& previous);
+-
+-// Thresholds are SPSA-tunable (see SearchParams); defaults are ZERO-native.
+-struct HindsightParams {
+-    int recoverReduction = 3;   // prior reduction needed to give one ply back
+-    int trimReduction    = 2;   // prior reduction needed before a ply can be taken away
+-    int trimEvalSum      = 150; // current+previous static eval above which a ply is taken
+-};
+-
+-// Hindsight correction for a node that was reached through a reduced search:
+-// if the reduction was large and the position did not get worse for the
+-// opponent, the reduction was probably too aggressive (+1 ply); if the node
+-// looks clearly winning for the side to move after a reduction, trim a ply.
+-Depth hindsightDepthAdjustment(Depth depth,
+-                               int priorReduction,
+-                               const Stack& current,
+-                               const Stack& previous,
+-                               const HindsightParams& params);
+-
+-// Convenience overload using the default thresholds.
+-Depth hindsightDepthAdjustment(Depth depth,
+-                               int priorReduction,
+-                               const Stack& current,
+-                               const Stack& previous);
+-
+-// Conservative ZERO-native punishment hook: when the opponent's move has
+-// worsened the static evaluation, reduce the LMR reduction by at most one on
+-// the first few candidate moves. This spends a little more search where a
+-// concrete mistake is most likely to be punishable, without creating a new
+-// search mode or persistent state field.
+-int punishOpponentWorsening(int reduction,
+-                            bool opponentWorsened,
+-                            int moveCount,
+-                            bool pvNode);
+-
+-} // namespace Zero::Search
+-
+-#endif
+--- a/tests/mistake_punisher.cpp
++++ /dev/null
+@@ -1,45 +0,0 @@
+-#include <cassert>
+-
+-#include "search_mistake.h"
+-
+-using namespace Zero;
+-using namespace Zero::Search;
+-
+-int main()
+-{
+-    Stack previous;
+-    Stack current;
+-
+-    // Sign convention: current > -previous marks the opponent-worsening context.
+-    previous.staticEval = 100;
+-    current.staticEval = -50;
+-    assert(opponentWorsening(current, previous));
+-
+-    previous.staticEval = -200;
+-    current.staticEval = 100;
+-    assert(!opponentWorsening(current, previous));
+-
+-    // Opponent worsened: no +1 hindsight recovery.
+-    previous.staticEval = 100;
+-    current.staticEval = -50;
+-    assert(hindsightDepthAdjustment(8, 3, current, previous) == 8);
+-
+-    // Opponent did not worsen and the prior search was heavily reduced:
+-    // recover one ply.
+-    previous.staticEval = -200;
+-    current.staticEval = 100;
+-    assert(!opponentWorsening(current, previous));
+-    assert(hindsightDepthAdjustment(8, 3, current, previous) == 9);
+-
+-    // Large positive combined evaluation triggers the conservative -1 rule.
+-    previous.staticEval = 100;
+-    current.staticEval = 100;
+-    assert(hindsightDepthAdjustment(8, 2, current, previous) == 7);
+-
+-    assert(punishOpponentWorsening(3, true, 4, false) == 2);
+-    assert(punishOpponentWorsening(3, true, 8, false) == 3);
+-    assert(punishOpponentWorsening(3, false, 4, false) == 3);
+-    assert(punishOpponentWorsening(3, true, 4, true) == 3);
+-
+-    return 0;
+-}

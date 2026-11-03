@@ -1,0 +1,9 @@
+bench 1 a2a3 -37 526520
+bench 2 d1d4 2 489183
+bench 3 e2e3 -39 600326
+bench 4 b4b5 26 462111
+bench 5 c2c4 9 901633
+bench 6 h6f8 20 231528
+bench 7 g1f3 -3 740127
+bench 8 d2d4 6 999637
+bench total positions 8 nodes 4951065 time 9414 nps 525925 signature 93bd26035ab984f7

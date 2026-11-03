@@ -1,0 +1,25 @@
+bench 1 c2c3 0 149243
+bench 2 d1d4 56 132670
+bench 3 b4b5 -2 198199
+bench 4 b4b5 40 116953
+bench 5 c2c4 29 161812
+bench 6 h6f8 83 26117
+bench 7 g1f3 9 139373
+bench 8 b2b4 -59 192481
+bench 9 e2e3 1 59944
+bench 10 b1c3 13 153930
+bench 11 e2e3 67 73502
+bench 12 d2d3 1 84254
+bench 13 d2d4 9 115335
+bench 14 e2e3 25 166882
+bench 15 h2h3 48 92543
+bench 16 a6c4 44 94183
+bench 17 d2b3 15 148797
+bench 18 f4e5 6 101192
+bench 19 c2c3 37 117623
+bench 20 b1d2 2 91174
+bench 21 c2c4 20 119736
+bench 22 b1c3 26 97138
+bench 23 e2a6 67 64306
+bench 24 a2a3 7 130047
+bench total positions 24 nodes 2827434 time 5098 nps 554616 signature 7e313e94b9e03991
