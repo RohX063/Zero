@@ -1,0 +1,48 @@
+pair 1 candidate_white=True candidate win moves=75 totals +1 =0 -0 unfinished=0 elapsed=2.3
+pair 1 candidate_white=False baseline win moves=75 totals +1 =0 -1 unfinished=0 elapsed=4.7
+pair 2 candidate_white=True baseline win moves=178 totals +1 =0 -2 unfinished=0 elapsed=10.3
+pair 2 candidate_white=False draw moves=92 totals +1 =1 -2 unfinished=0 elapsed=13.4
+pair 3 candidate_white=True baseline win moves=62 totals +1 =1 -3 unfinished=0 elapsed=15.3
+pair 3 candidate_white=False draw moves=67 totals +1 =2 -3 unfinished=0 elapsed=17.5
+pair 4 candidate_white=True candidate win moves=71 totals +2 =2 -3 unfinished=0 elapsed=19.7
+pair 4 candidate_white=False candidate win moves=72 totals +3 =2 -3 unfinished=0 elapsed=21.9
+pair 5 candidate_white=True draw moves=88 totals +3 =3 -3 unfinished=0 elapsed=25.0
+pair 5 candidate_white=False candidate win moves=94 totals +4 =3 -3 unfinished=0 elapsed=28.4
+pair 6 candidate_white=True draw moves=150 totals +4 =4 -3 unfinished=0 elapsed=33.3
+pair 6 candidate_white=False baseline win moves=143 totals +4 =4 -4 unfinished=0 elapsed=37.9
+pair 7 candidate_white=True draw moves=140 totals +4 =5 -4 unfinished=0 elapsed=42.4
+pair 7 candidate_white=False draw moves=179 totals +4 =6 -4 unfinished=0 elapsed=48.2
+pair 8 candidate_white=True candidate win moves=119 totals +5 =6 -4 unfinished=0 elapsed=51.9
+pair 8 candidate_white=False draw moves=182 totals +5 =7 -4 unfinished=0 elapsed=57.9
+pair 9 candidate_white=True baseline win moves=82 totals +5 =7 -5 unfinished=0 elapsed=60.4
+pair 9 candidate_white=False draw moves=170 totals +5 =8 -5 unfinished=0 elapsed=66.0
+pair 10 candidate_white=True candidate win moves=97 totals +6 =8 -5 unfinished=0 elapsed=69.0
+pair 10 candidate_white=False draw moves=150 totals +6 =9 -5 unfinished=0 elapsed=73.8
+pair 11 candidate_white=True baseline win moves=110 totals +6 =9 -6 unfinished=0 elapsed=77.3
+pair 11 candidate_white=False candidate win moves=74 totals +7 =9 -6 unfinished=0 elapsed=79.6
+pair 12 candidate_white=True draw moves=117 totals +7 =10 -6 unfinished=0 elapsed=83.4
+pair 12 candidate_white=False draw moves=101 totals +7 =11 -6 unfinished=0 elapsed=86.7
+pair 13 candidate_white=True draw moves=131 totals +7 =12 -6 unfinished=0 elapsed=91.0
+pair 13 candidate_white=False candidate win moves=220 totals +8 =12 -6 unfinished=0 elapsed=98.1
+pair 14 candidate_white=True draw moves=125 totals +8 =13 -6 unfinished=0 elapsed=102.2
+pair 14 candidate_white=False candidate win moves=136 totals +9 =13 -6 unfinished=0 elapsed=106.4
+pair 15 candidate_white=True draw moves=135 totals +9 =14 -6 unfinished=0 elapsed=110.8
+pair 15 candidate_white=False baseline win moves=73 totals +9 =14 -7 unfinished=0 elapsed=113.1
+pair 16 candidate_white=True draw moves=125 totals +9 =15 -7 unfinished=0 elapsed=117.2
+pair 16 candidate_white=False draw moves=133 totals +9 =16 -7 unfinished=0 elapsed=121.5
+pair 17 candidate_white=True candidate win moves=97 totals +10 =16 -7 unfinished=0 elapsed=124.6
+pair 17 candidate_white=False candidate win moves=80 totals +11 =16 -7 unfinished=0 elapsed=127.1
+pair 18 candidate_white=True baseline win moves=138 totals +11 =16 -8 unfinished=0 elapsed=131.4
+pair 18 candidate_white=False candidate win moves=150 totals +12 =16 -8 unfinished=0 elapsed=136.2
+pair 19 candidate_white=True candidate win moves=141 totals +13 =16 -8 unfinished=0 elapsed=140.7
+pair 19 candidate_white=False baseline win moves=139 totals +13 =16 -9 unfinished=0 elapsed=145.1
+pair 20 candidate_white=True draw moves=133 totals +13 =17 -9 unfinished=0 elapsed=149.5
+pair 20 candidate_white=False baseline win moves=123 totals +13 =17 -10 unfinished=0 elapsed=153.3
+pair 21 candidate_white=True baseline win moves=40 totals +13 =17 -11 unfinished=0 elapsed=154.6
+pair 21 candidate_white=False candidate win moves=112 totals +14 =17 -11 unfinished=0 elapsed=158.1
+pair 22 candidate_white=True candidate win moves=87 totals +15 =17 -11 unfinished=0 elapsed=160.9
+pair 22 candidate_white=False unfinished moves=240 totals +15 =17 -11 unfinished=1 elapsed=168.7
+pair 23 candidate_white=True baseline win moves=140 totals +15 =17 -12 unfinished=1 elapsed=173.1
+pair 23 candidate_white=False draw moves=168 totals +15 =18 -12 unfinished=1 elapsed=178.6
+pair 24 candidate_white=True baseline win moves=98 totals +15 =18 -13 unfinished=1 elapsed=181.6
+pair 24 candidate_white=False candidate win moves=108 totals +16 =18 -13 unfinished=1 elapsed=185.0

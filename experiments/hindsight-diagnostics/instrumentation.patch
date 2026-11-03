@@ -1,0 +1,45 @@
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -256,9 +256,17 @@
+         hp.recoverReduction = params_.hindsightRecoverReduction;
+         hp.trimReduction    = params_.hindsightTrimReduction;
+         hp.trimEvalSum      = params_.hindsightTrimEvalSum;
++        ++stats_.hindsightEligible;
++        stats_.prior0 += priorReduction == 0;
++        stats_.prior1 += priorReduction == 1;
++        stats_.prior2 += priorReduction == 2;
++        stats_.prior3plus += priorReduction >= 3;
++        const Depth priorDepthForDiagnostics = depth;
+         depth = std::min(Depth(MAX_PLY - 1),
+                          hindsightDepthAdjustment(
+                              depth, priorReduction, *ss, *(ss - 1), hp));
++        stats_.hindsightUp += depth > priorDepthForDiagnostics;
++        stats_.hindsightDown += depth < priorDepthForDiagnostics;
+     }
+ 
+     const bool opponentWorsened = haveParentEval && opponentWorsening(*ss, *(ss - 1));
+@@ -483,8 +491,11 @@
+                 std::max(0, fullDepth - 1),
+                 (reduction1024 + 512) / 1024);
+ 
++            const int reductionBeforePunish = reduction;
+             reduction = punishOpponentWorsening(
+                 reduction, opponentWorsened, moveCount, pvNode);
++            stats_.punishApplied += reduction < reductionBeforePunish;
++            stats_.punishToZero += reductionBeforePunish > 0 && reduction == 0;
+ 
+             if (reduction > 0)
+                 ++stats_.lmrReductions;
+--- a/src/search_types.h
++++ b/src/search_types.h
+@@ -29,6 +29,10 @@
+ 
+ struct SearchStats {
+     std::uint64_t pvsReSearches = 0;
++    std::uint64_t hindsightEligible = 0, hindsightUp = 0, hindsightDown = 0;
++    std::uint64_t punishApplied = 0, punishToZero = 0;
++    std::uint64_t prior0 = 0, prior1 = 0, prior2 = 0, prior3plus = 0;
++
+     std::uint64_t lmrReductions = 0;
+     std::uint64_t lmrResearches = 0;
+     std::uint64_t nullMoveSearches = 0;

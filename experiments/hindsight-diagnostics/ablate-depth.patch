@@ -1,0 +1,20 @@
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -249,17 +249,6 @@
+         && ss->staticEval > (ss - 2)->staticEval;
+ 
+     const bool haveParentEval = ss->ply >= 1 && ss->evalValid && (ss - 1)->evalValid;
+-
+-    // Hindsight depth correction (see search_mistake.h).
+-    if (haveParentEval && ss->ply >= 2 && depth >= 3) {
+-        HindsightParams hp;
+-        hp.recoverReduction = params_.hindsightRecoverReduction;
+-        hp.trimReduction    = params_.hindsightTrimReduction;
+-        hp.trimEvalSum      = params_.hindsightTrimEvalSum;
+-        depth = std::min(Depth(MAX_PLY - 1),
+-                         hindsightDepthAdjustment(
+-                             depth, priorReduction, *ss, *(ss - 1), hp));
+-    }
+ 
+     const bool opponentWorsened = haveParentEval && opponentWorsening(*ss, *(ss - 1));
+ 

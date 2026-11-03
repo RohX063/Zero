@@ -1,0 +1,19 @@
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -261,7 +261,6 @@
+                              depth, priorReduction, *ss, *(ss - 1), hp));
+     }
+ 
+-    const bool opponentWorsened = haveParentEval && opponentWorsening(*ss, *(ss - 1));
+ 
+     // Null-move pruning at expected cut nodes.
+     //  * margin and reduction come from SearchParams (ZERO-tuned)
+@@ -483,8 +482,6 @@
+                 std::max(0, fullDepth - 1),
+                 (reduction1024 + 512) / 1024);
+ 
+-            reduction = punishOpponentWorsening(
+-                reduction, opponentWorsened, moveCount, pvNode);
+ 
+             if (reduction > 0)
+                 ++stats_.lmrReductions;
